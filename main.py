@@ -137,22 +137,27 @@ def create_transistors(items: List[str], origin: Point) -> str:
             nmos_transistors.append(item)
 
     output = ""
-    pmos_width = math.floor(math.sqrt(len(pmos_transistors))) or 1
+    # pmos_width = math.floor(math.sqrt(len(pmos_transistors))) or 1
     for index, item in enumerate(pmos_transistors):
         pos = Point(
-            origin.x + ((index % pmos_width) * 280),
-            origin.y + ((index // pmos_width) * 180),
+            # origin.x + ((index % pmos_width) * 280),
+            # origin.y + ((index // pmos_width) * 180),
+            origin.x + (index * 120),
+            origin.y
         )
         output += create_single_transistor(item, pos, index)
 
-    nmos_width = math.floor(math.sqrt(len(nmos_transistors))) or 1
-    nmos_origin = Point(origin.x, origin.y +
-                        (len(pmos_transistors) // pmos_width + 2) * 180)
+    # nmos_width = math.floor(math.sqrt(len(nmos_transistors))) or 1
+    # nmos_origin = Point(origin.x, origin.y +
+    #                     (len(pmos_transistors) // pmos_width + 2) * 180)
+    nmos_origin = Point(origin.x, origin.y + 280)
 
     for index, item in enumerate(nmos_transistors):
         pos = Point(
-            nmos_origin.x + ((index % nmos_width) * 280),
-            nmos_origin.y + ((index // nmos_width) * 180),
+            # nmos_origin.x + ((index % nmos_width) * 280),
+            # nmos_origin.y + ((index // nmos_width) * 180),
+            nmos_origin.x + (index * 120),
+            nmos_origin.y
         )
         output += create_single_transistor(
             item, pos, index, len(pmos_transistors))
