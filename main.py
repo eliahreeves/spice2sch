@@ -2,6 +2,7 @@ from argparse import ArgumentParser, FileType
 import sys
 import math
 from typing import List, Tuple, NamedTuple
+from importlib.metadata import version, PackageNotFoundError
 
 
 file_header = """v {xschem version=3.4.6RC file_version=1.2
@@ -19,6 +20,13 @@ p_value = 0
 class Point(NamedTuple):
     x: int
     y: int
+
+
+def get_version():
+    try:
+        return version("spice-to-sch")
+    except PackageNotFoundError:
+        return "Unknown (not installed as a package)"
 
 
 def extract_io_from_spice(content: List[str]) -> Tuple[List[str], List[str]]:
@@ -81,7 +89,7 @@ def find_content(file: List[str]) -> List[str]:
         if line.lower().startswith(".subckt"):
             start = index
         elif line.lower().startswith(".ends"):
-            return file[start + 1: index]
+            return file[start + 1 : index]
 
     raise ValueError("Invalid format")
 
@@ -89,10 +97,12 @@ def find_content(file: List[str]) -> List[str]:
 def is_pmos(item: str) -> bool:
     items = item.split(" ")
     transistor_name = items[-3].split("__")[1]
-    return transistor_name.startswith('p')
+    return transistor_name.startswith("p")
 
 
-def create_single_transistor(item: str, pos: Point, index: int, num_pmos: int = 0) -> str:
+def create_single_transistor(
+    item: str, pos: Point, index: int, num_pmos: int = 0
+) -> str:
     global p_value
     output = ""
 
@@ -166,13 +176,19 @@ def create_transistors(items: List[str], origin: Point) -> str:
 
 
 def main() -> None:
-    parser = ArgumentParser(
-        description="Copy the contents of one file to another.")
+    parser = ArgumentParser(description="Copy the contents of one file to another.")
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=get_version(),
+        help="Show version and exit",
+    )
     parser.add_argument(
         "-i",
         "--input-file",
         type=FileType("r"),
-        default=sys.stdin,
+        default=sys.stdin if not sys.stdin.isatty() else None,
         required=False,
         help="Input file to read from",
     )
@@ -185,7 +201,17 @@ def main() -> None:
         help="Output file to write to",
     )
 
+    def error_and_exit(message):
+        print(f"Error: {message}\n", file=sys.stderr)
+        parser.print_help()
+        sys.exit(2)
+
+    parser.error = error_and_exit
+
     args = parser.parse_args()
+
+    if args.input_file is None:
+        parser.error("No input provided. Use -i FILE or pipe data to stdin.")
 
     with args.input_file as infile, args.output_file as outfile:
         spice_input = infile.read()
