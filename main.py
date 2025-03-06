@@ -5,6 +5,19 @@ from importlib.metadata import version, PackageNotFoundError
 from dataclasses import dataclass
 
 
+@dataclass
+class Point:
+    x: int
+    y: int
+
+    def __add__(self, other: "Point") -> "Point":
+        return Point(self.x + other.x, self.y + other.y)
+
+
+io_origin = Point(-120, -40)
+pmos_origin = Point(0, 0)
+nmos_origin = pmos_origin + Point(0, 200)
+spacing = 120
 file_header = """v {xschem version=3.4.6RC file_version=1.2
 }
 G {}
@@ -18,29 +31,64 @@ p_value = 0
 
 
 class Transistor:
-    def __init__(self, spice_line: str):
-        items = spice_line.split(" ")
-        self.length = items[-1]
-        self.width = items[-2]
-        self.name = items[-3].split("__")
-        self.body = items[-4]
-        self.drain = items[-5]
-        self.gate = items[-6]
-        self.source = items[-7]
+    def __init__(
+        self,
+        length: str,
+        width: str,
+        library: str,
+        name: str,
+        body: str,
+        drain: str,
+        gate: str,
+        source: str,
+        id: int,
+    ):
+        self.length = length
+        self.width = width
+        self.library = library
+        self.name = name
+        self.body = body
+        self.drain = drain
+        self.gate = gate
+        self.source = source
+        self.id = id
 
-        # Normalize VPWR/VGND connections
+    @classmethod
+    def from_spice_line(cls, line: str, index: int):
+        items = line.split(" ")
+        library_name = items[-3].split("__")
+
+        transistor = cls(
+            length=items[-1][2:],
+            width=items[-2][2:],
+            library=library_name[0],
+            name=library_name[1],
+            body=items[-4],
+            drain=items[-5],
+            gate=items[-6],
+            source=items[-7],
+            id=index,
+        )
+
+        transistor.normalize()
+        return transistor
+
+    def normalize(self):
         if self.drain == "VPWR" or self.source == "VGND":
             self.drain, self.source = self.source, self.drain
 
     @property
     def is_pmos(self) -> bool:
-        return self.name[1].startswith("p")
+        return self.name.startswith("p")
+
+    @property
+    def is_nmos(self) -> bool:
+        return self.name.startswith("n")
 
 
-@dataclass
-class Point:
-    x: int
-    y: int
+class TransistorGroup:
+    def __init__(self, transistors: List[Transistor]):
+        self.transistors = transistors
 
 
 def get_version():
@@ -50,18 +98,7 @@ def get_version():
         return "Unknown (not installed as a package)"
 
 
-def extract_io_from_spice(content: List[str]) -> Tuple[List[str], List[str]]:
-    subckt_line = None
-
-    for line in content:
-        line = line.strip()
-        if line.lower().startswith(".subckt"):
-            subckt_line = line
-            break
-
-    if not subckt_line:
-        raise ValueError("No .subckt definition found in the SPICE file.")
-
+def extract_io_from_spice(subckt_line: str) -> Tuple[List[str], List[str]]:
     tokens = subckt_line.split()
     if len(tokens) < 3:
         raise ValueError("Invalid format")
@@ -100,29 +137,30 @@ def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     return output
 
 
-def find_content(file: List[str]) -> List[Transistor]:
+def find_content(file: List[str]) -> List[str]:
     start = 0
     for index, line in enumerate(file):
         line = line.strip()
         if line.lower().startswith(".subckt"):
             start = index
         elif line.lower().startswith(".ends"):
-            return [Transistor(line) for line in file[start + 1 : index]]
+            return file[start : index + 1]
 
     raise ValueError("Invalid format")
 
-    items = item.split(" ")
-    transistor_name = items[-3].split("__")[1]
-    return transistor_name.startswith("p")
+
+def create_transistor_objects(spice: List[str]) -> List[Transistor]:
+    return [
+        Transistor.from_spice_line(line, index)
+        for index, line in enumerate(spice[1:-1])
+    ]
 
 
-def create_single_transistor(
-    transistor: Transistor, pos: Point, index: int, num_pmos: int = 0
-) -> str:
+def create_single_transistor(transistor: Transistor, pos: Point) -> str:
     global p_value
     output = ""
 
-    output += f"C {{{'/'.join(transistor.name)}.sym}} {pos.x} {pos.y} 0 0 {{name=M{index + num_pmos}\nW={transistor.width[2:]}\nL={transistor.length[2:]}\nmodel={transistor.name[1]}\nspiceprefix=X\n}}\n"
+    output += f"C {{{transistor.library}/{transistor.name}.sym}} {pos.x} {pos.y} 0 0 {{name=M{transistor.id}\nW={transistor.width}\nL={transistor.length}\nmodel={transistor.name}\nspiceprefix=X\n}}\n"
 
     output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.body}}}\n"
     p_value += 1
@@ -139,27 +177,11 @@ def create_single_transistor(
     return output
 
 
-def create_transistors(transistors: List[Transistor], origin: Point) -> str:
-    pmos_transistors = []
-    nmos_transistors = []
-
-    for trans in transistors:
-        if trans.is_pmos:
-            pmos_transistors.append(trans)
-        else:
-            nmos_transistors.append(trans)
-
+def create_xschem_transistor_row(transistors: List[Transistor], origin: Point) -> str:
     output = ""
-    for index, trans in enumerate(pmos_transistors):
-        pos = Point(origin.x + (index * 120), origin.y)
-        output += create_single_transistor(trans, pos, index)
-
-    nmos_origin = Point(origin.x, origin.y + 280)
-
-    for index, trans in enumerate(nmos_transistors):
-        pos = Point(nmos_origin.x + (index * 120), nmos_origin.y)
-        output += create_single_transistor(trans, pos, index, len(pmos_transistors))
-
+    for index, item in enumerate(transistors):
+        pos = Point(origin.x + (index * spacing), origin.y)
+        output += create_single_transistor(item, pos)
     return output
 
 
@@ -210,12 +232,36 @@ def main() -> None:
 
     with args.input_file as infile, args.output_file as outfile:
         spice_input = infile.read()
+        spice_input_lines = spice_input.split("\n")
+
+        # includes .subckt and .ends
+        spice_content_lines = find_content(spice_input_lines)
+
         sch_output = file_header
-        io_pins = extract_io_from_spice(spice_input.split("\n"))
-        sch_output += create_io_block(io_pins, Point(-120, -40))
-        sch_output += create_transistors(
-            find_content(spice_input.split("\n")), Point(20, 30)
+
+        # create io_pins
+        io_pins = extract_io_from_spice(spice_content_lines[0])
+        sch_output += create_io_block(io_pins, io_origin)
+
+        # create list of transistors
+        transistors = create_transistor_objects(spice_content_lines)
+        # group them
+        extra_pmos_transistors = TransistorGroup([])
+        extra_nmos_transistors = TransistorGroup([])
+
+        for item in transistors:
+            if item.is_pmos:
+                extra_pmos_transistors.transistors.append(item)
+            else:
+                extra_nmos_transistors.transistors.append(item)
+
+        sch_output += create_xschem_transistor_row(
+            extra_pmos_transistors.transistors, pmos_origin
         )
+        sch_output += create_xschem_transistor_row(
+            extra_nmos_transistors.transistors, nmos_origin
+        )
+
         outfile.write(sch_output)
 
 
