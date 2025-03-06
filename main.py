@@ -1,6 +1,5 @@
 from argparse import ArgumentParser, FileType
 import sys
-import math
 from typing import List, NoReturn, Tuple
 from importlib.metadata import version, PackageNotFoundError
 from dataclasses import dataclass
@@ -44,15 +43,6 @@ class Point:
     y: int
 
 
-@dataclass
-class transistor:
-    length: str
-    width: str
-    gate: str
-    drain: str
-    source: str
-
-
 def get_version():
     try:
         return version("spice-to-sch")
@@ -76,26 +66,23 @@ def extract_io_from_spice(content: List[str]) -> Tuple[List[str], List[str]]:
     if len(tokens) < 3:
         raise ValueError("Invalid format")
 
-    # subckt_name = tokens[1]
     ports = tokens[2:]
 
     power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB"}
 
     inputs: List[str] = []
     outputs: List[str] = []
-    found_output = False
+    found_inputs = False
 
-    for port in reversed(ports):  # Start from the end
-        if port in power_ground:
-            found_output = True
+    for port in ports:
+        is_port_power_ground = port in power_ground
+        if is_port_power_ground:
+            found_inputs = True
 
-        if not found_output:
-            outputs.append(port)
-        else:
+        if not found_inputs or is_port_power_ground:
             inputs.append(port)
-
-    inputs.reverse()  # Restore input order
-    outputs.reverse()
+        else:
+            outputs.append(port)
     return (inputs, outputs)
 
 
@@ -120,7 +107,7 @@ def find_content(file: List[str]) -> List[Transistor]:
         if line.lower().startswith(".subckt"):
             start = index
         elif line.lower().startswith(".ends"):
-            return [Transistor(line) for line in file[start + 1: index]]
+            return [Transistor(line) for line in file[start + 1 : index]]
 
     raise ValueError("Invalid format")
 
@@ -164,27 +151,22 @@ def create_transistors(transistors: List[Transistor], origin: Point) -> str:
 
     output = ""
     for index, trans in enumerate(pmos_transistors):
-        pos = Point(
-            origin.x + (index * 120),
-            origin.y
-        )
+        pos = Point(origin.x + (index * 120), origin.y)
         output += create_single_transistor(trans, pos, index)
 
     nmos_origin = Point(origin.x, origin.y + 280)
 
     for index, trans in enumerate(nmos_transistors):
-        pos = Point(
-            nmos_origin.x + (index * 120),
-            nmos_origin.y
-        )
-        output += create_single_transistor(
-            trans, pos, index, len(pmos_transistors))
+        pos = Point(nmos_origin.x + (index * 120), nmos_origin.y)
+        output += create_single_transistor(trans, pos, index, len(pmos_transistors))
 
     return output
 
 
-def main() -> None:
-    parser = ArgumentParser(description="Copy the contents of one file to another.")
+def create_parser() -> ArgumentParser:
+    parser = ArgumentParser(
+        description="Convert SkyWater SKY130 spice files into xschem .sch files."
+    )
     parser.add_argument(
         "-v",
         "--version",
