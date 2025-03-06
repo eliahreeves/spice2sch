@@ -4,11 +4,11 @@ A CLI to convert SkyWater SKY130 spice files into xschem .sch files. Designed fo
 Download the latest .whl file from [releases](https://github.com/eliahreeves/spice-to-sch/releases/latest).
 ### For uv users
 ```bash
-uv tool install spice_to_sch-0.1.0-py3-none-any.whl
+uv tool install spice_to_sch-0.1.1-py3-none-any.whl
 ```
 ### For pip users (untested)
 ```bash
-pip install spice_to_sch-0.1.0-py3-none-any.whl
+pip install spice_to_sch-0.1.1-py3-none-any.whl
 ```
 ## Usage
 > [!CAUTION]
@@ -25,3 +25,15 @@ cat file.spice | spice-to-sch > file.sch
 ## Limitations
 * Currently this program will assume all components are transistors. Using this on a .spice file with other components will not work.
 * Although schematics will pass a Layout Versus Schematic (LVS) check, all components will be in a simple grid and must be manually rearranged.
+## Running from source with uv
+Clone the repo
+```bash
+git clone git@github.com:eliahreeves/spice-to-sch.git
+cd spice-to-sh
+```
+Build and install
+```bash
+uv run spice-to-sch
+```
+> [!NOTE]  
+> You may need to remove existing installations using `uv tool uninstall spice-to-sch` or similar in order to avoid namespace confilcts.
