@@ -1,8 +1,9 @@
 from argparse import ArgumentParser, FileType
 import sys
 import math
-from typing import List, Tuple, NamedTuple
+from typing import List, NoReturn, Tuple
 from importlib.metadata import version, PackageNotFoundError
+from dataclasses import dataclass
 
 
 file_header = """v {xschem version=3.4.6RC file_version=1.2
@@ -17,9 +18,19 @@ E {}
 p_value = 0
 
 
-class Point(NamedTuple):
+@dataclass
+class Point:
     x: int
     y: int
+
+
+@dataclass
+class transistor:
+    length: str
+    width: str
+    gate: str
+    drain: str
+    source: str
 
 
 def get_version():
@@ -170,8 +181,10 @@ def create_transistors(items: List[str], origin: Point) -> str:
     return output
 
 
-def main() -> None:
-    parser = ArgumentParser(description="Copy the contents of one file to another.")
+def create_parser() -> ArgumentParser:
+    parser = ArgumentParser(
+        description="Convert SkyWater SKY130 spice files into xschem .sch files."
+    )
     parser.add_argument(
         "-v",
         "--version",
@@ -196,13 +209,18 @@ def main() -> None:
         help="Output file to write to",
     )
 
-    def error_and_exit(message):
+    def error_and_exit(message: str) -> NoReturn:
         print(f"Error: {message}\n", file=sys.stderr)
         parser.print_help()
         sys.exit(2)
 
     parser.error = error_and_exit
 
+    return parser
+
+
+def main() -> None:
+    parser = create_parser()
     args = parser.parse_args()
 
     if args.input_file is None:
