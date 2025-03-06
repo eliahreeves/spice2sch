@@ -1,9 +1,15 @@
 [project]
 name = "spice-to-sch"
-version = "0.1.1"
-description = "A CLI to convert SkyWater SKY130 spice files into xschem .sch files."
+version = "0.1.0"
+description = "Add your description here"
 readme = "README.md"
+authors = [{ name = "Eliah Reeves", email = "ereeclimb@gmail.com" }]
 requires-python = ">=3.13"
 dependencies = []
+
 [project.scripts]
-spice-to-sch = "main:main"
+spice-to-sch = "spice_to_sch.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
