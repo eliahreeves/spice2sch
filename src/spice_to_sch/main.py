@@ -1,101 +1,9 @@
-from argparse import ArgumentParser, FileType
-import sys
-from typing import List, NoReturn, Tuple
-from importlib.metadata import version, PackageNotFoundError
-from dataclasses import dataclass
-
-
-@dataclass
-class Point:
-    x: int
-    y: int
-
-    def __add__(self, other: "Point") -> "Point":
-        return Point(self.x + other.x, self.y + other.y)
-
-
-io_origin = Point(-120, -40)
-pmos_origin = Point(0, 0)
-nmos_origin = pmos_origin + Point(0, 200)
-spacing = 120
-file_header = """v {xschem version=3.4.6RC file_version=1.2
-}
-G {}
-K {}
-V {}
-S {}
-E {}
-"""
+from typing import List, Tuple
+from spice_to_sch.models import Point, Transistor, TransistorGroup
+import spice_to_sch.constants as constants
+from spice_to_sch.cli_def import create_parser
 
 p_value = 0
-
-
-class Transistor:
-    def __init__(
-        self,
-        length: str,
-        width: str,
-        library: str,
-        name: str,
-        body: str,
-        drain: str,
-        gate: str,
-        source: str,
-        id: int,
-    ):
-        self.length = length
-        self.width = width
-        self.library = library
-        self.name = name
-        self.body = body
-        self.drain = drain
-        self.gate = gate
-        self.source = source
-        self.id = id
-
-    @classmethod
-    def from_spice_line(cls, line: str, index: int):
-        items = line.split(" ")
-        library_name = items[-3].split("__")
-
-        transistor = cls(
-            length=items[-1][2:],
-            width=items[-2][2:],
-            library=library_name[0],
-            name=library_name[1],
-            body=items[-4],
-            drain=items[-5],
-            gate=items[-6],
-            source=items[-7],
-            id=index,
-        )
-
-        transistor.normalize()
-        return transistor
-
-    def normalize(self):
-        if self.drain == "VPWR" or self.source == "VGND":
-            self.drain, self.source = self.source, self.drain
-
-    @property
-    def is_pmos(self) -> bool:
-        return self.name.startswith("p")
-
-    @property
-    def is_nmos(self) -> bool:
-        return self.name.startswith("n")
-
-
-class TransistorGroup:
-    def __init__(self, transistors: List[Transistor]):
-        self.transistors = transistors
-
-
-def get_version():
-    try:
-        return version("spice-to-sch")
-    except PackageNotFoundError:
-        return "Unknown (not installed as a package)"
 
 
 def extract_io_from_spice(subckt_line: str) -> Tuple[List[str], List[str]]:
@@ -180,47 +88,9 @@ def create_single_transistor(transistor: Transistor, pos: Point) -> str:
 def create_xschem_transistor_row(transistors: List[Transistor], origin: Point) -> str:
     output = ""
     for index, item in enumerate(transistors):
-        pos = Point(origin.x + (index * spacing), origin.y)
+        pos = Point(origin.x + (index * constants.spacing), origin.y)
         output += create_single_transistor(item, pos)
     return output
-
-
-def create_parser() -> ArgumentParser:
-    parser = ArgumentParser(
-        description="Convert SkyWater SKY130 spice files into xschem .sch files."
-    )
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version=get_version(),
-        help="Show version and exit",
-    )
-    parser.add_argument(
-        "-i",
-        "--input-file",
-        type=FileType("r"),
-        default=sys.stdin if not sys.stdin.isatty() else None,
-        required=False,
-        help="Input file to read from",
-    )
-    parser.add_argument(
-        "-o",
-        "--output-file",
-        type=FileType("w"),
-        default=sys.stdout,
-        required=False,
-        help="Output file to write to",
-    )
-
-    def error_and_exit(message: str) -> NoReturn:
-        print(f"Error: {message}\n", file=sys.stderr)
-        parser.print_help()
-        sys.exit(2)
-
-    parser.error = error_and_exit
-
-    return parser
 
 
 def main() -> None:
@@ -237,14 +107,15 @@ def main() -> None:
         # includes .subckt and .ends
         spice_content_lines = find_content(spice_input_lines)
 
-        sch_output = file_header
+        sch_output = constants.file_header
 
         # create io_pins
         io_pins = extract_io_from_spice(spice_content_lines[0])
-        sch_output += create_io_block(io_pins, io_origin)
+        sch_output += create_io_block(io_pins, constants.io_origin)
 
         # create list of transistors
         transistors = create_transistor_objects(spice_content_lines)
+
         # group them
         extra_pmos_transistors = TransistorGroup([])
         extra_nmos_transistors = TransistorGroup([])
@@ -256,14 +127,10 @@ def main() -> None:
                 extra_nmos_transistors.transistors.append(item)
 
         sch_output += create_xschem_transistor_row(
-            extra_pmos_transistors.transistors, pmos_origin
+            extra_pmos_transistors.transistors, constants.pmos_origin
         )
         sch_output += create_xschem_transistor_row(
-            extra_nmos_transistors.transistors, nmos_origin
+            extra_nmos_transistors.transistors, constants.nmos_origin
         )
 
         outfile.write(sch_output)
-
-
-if __name__ == "__main__":
-    main()
