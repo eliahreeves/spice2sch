@@ -66,6 +66,55 @@ def create_transistor_objects(spice: List[str]) -> List[Transistor]:
     return sorted(transistors, key=lambda x: x.gate.lower())
 
 
+def find_inverters(transistors: List[Transistor]) -> List[Transistor]:
+    groups: List[TransistorGroup] = []
+    i = 0
+
+    while i < len(transistors):
+        j = i + 1
+
+        while j < len(transistors):
+            t1 = transistors[i]
+            t2 = transistors[j]
+
+            # Skip if transistors are the same type
+            if t1.is_pmos == t2.is_pmos:
+                j += 1
+                continue
+
+            # Check if transistors share a connection
+            shared_node = None
+            if t1.source in [t2.source, t2.drain]:
+                shared_node = t1.source
+            elif t1.drain in [t2.source, t2.drain]:
+                shared_node = t1.drain
+
+            if shared_node is None:
+                j += 1
+                continue
+
+            # Check if other connections are VPWR and VGND
+            t1_other = t1.drain if t1.source == shared_node else t1.source
+            t2_other = t2.drain if t2.source == shared_node else t2.source
+
+            is_inverter = False
+            if (t1.is_pmos == True and t1_other == 'VPWR' and t2_other == 'VGND'):
+                is_inverter = True
+            elif (t2.is_pmos == True and t2_other == 'VPWR' and t1_other == 'VGND'):
+                is_inverter = True
+
+            if is_inverter:
+                groups.append(TransistorGroup([t1, t2]))
+                transistors.pop(j)
+                transistors.pop(i)
+                i -= 1  # Adjust i since we removed elements
+                break
+            j += 1
+        i += 1
+
+    return groups
+
+
 def find_parallel_transistors(transistors: List[Transistor]) -> List[TransistorGroup]:
     groups: List[TransistorGroup] = []
     i = 0
@@ -94,23 +143,37 @@ def find_parallel_transistors(transistors: List[Transistor]) -> List[TransistorG
     return groups
 
 
-def create_single_transistor(transistor: Transistor, pos: Point) -> str:
+def create_single_transistor(
+    transistor: Transistor,
+    pos: Point,
+    print_source: bool = True,
+    print_drain: bool = True,
+    print_gate: bool = True
+) -> str:
     global p_value
     output = ""
 
+    # Create transistor symbol
     output += f"C {{{transistor.library}/{transistor.name}.sym}} {pos.x} {pos.y} 0 0 {{name=M{transistor.id}\nW={transistor.width}\nL={transistor.length}\nmodel={transistor.name}\nspiceprefix=X\n}}\n"
 
+    # Create body pin
     output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.body}}}\n"
     p_value += 1
 
-    output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.source}}}\n"
-    p_value += 1
+    # Create source pin
+    if print_source:
+        output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.source}}}\n"
+        p_value += 1
 
-    output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y + 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.drain}}}\n"
-    p_value += 1
+    # Create drain pin
+    if print_drain:
+        output += f"C {{lab_pin.sym}} {pos.x + 20} {pos.y + 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.drain}}}\n"
+        p_value += 1
 
-    output += f"C {{lab_pin.sym}} {pos.x - 20} {pos.y} 0 0 {{name=p{p_value} sig_type=std_logic lab={transistor.gate}}}\n"
-    p_value += 1
+    # Create gate pin
+    if print_gate:
+        output += f"C {{lab_pin.sym}} {pos.x - 20} {pos.y} 0 0 {{name=p{p_value} sig_type=std_logic lab={transistor.gate}}}\n"
+        p_value += 1
 
     return output
 
@@ -120,6 +183,64 @@ def create_xschem_transistor_row(transistors: List[Transistor], origin: Point) -
     for index, item in enumerate(transistors):
         pos = Point(origin.x + (index * constants.spacing), origin.y)
         output += create_single_transistor(item, pos)
+    return output
+
+
+def create_inverters(groups: List[TransistorGroup], origin: Point) -> str:
+    global p_value
+    output = ""
+    current_x = origin.x
+
+    for group in groups:
+        # Get NMOS and PMOS transistors
+        nmos = next(t for t in group.transistors if not t.is_pmos)
+        pmos = next(t for t in group.transistors if t.is_pmos)
+
+        pmos_pos = Point(current_x, origin.y - 30)
+        nmos_pos = Point(current_x, origin.y + 30)
+
+        # Create both transistors
+        output += create_single_transistor(pmos, pmos_pos,
+                                           print_drain=False, print_gate=False)
+        output += create_single_transistor(nmos, nmos_pos,
+                                           print_source=False, print_gate=False)
+
+        output += f"C {{lab_pin.sym}} {nmos_pos.x - 60} {nmos_pos.y - 30} 0 0 {{name=p{p_value} sig_type=std_logic lab={nmos.gate}}}\n"
+        p_value += 1
+        output += f"C {{lab_pin.sym}} {nmos_pos.x + 140} {nmos_pos.y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={nmos.source}}}\n"
+        p_value += 1
+
+        # Create wires
+        input_wire = Wire(
+            start_x=nmos_pos.x - 20,
+            start_y=nmos_pos.y - 30,
+            end_x=nmos_pos.x - 60,
+            end_y=nmos_pos.y - 30,
+            label=pmos.drain
+        )
+        output += input_wire.to_xschem()
+
+        connecting_wire = Wire(
+            start_x=pmos_pos.x - 20,
+            start_y=pmos_pos.y,
+            end_x=nmos_pos.x - 20,
+            end_y=nmos_pos.y,
+            label=pmos.drain
+        )
+        output += connecting_wire.to_xschem()
+
+        output_wire = Wire(
+            start_x=nmos_pos.x + 20,
+            start_y=nmos_pos.y - 30,
+            end_x=nmos_pos.x + 140,
+            end_y=nmos_pos.y - 30,
+            label=pmos.drain
+        )
+        output += output_wire.to_xschem()
+
+        # Update x position for next inverter
+        current_x += constants.spacing * 3
+
     return output
 
 
@@ -190,6 +311,7 @@ def main() -> None:
         transistors = create_transistor_objects(spice_content_lines)
 
         # sort
+        inverters = find_inverters(transistors)
         parallel_transistors = find_parallel_transistors(transistors)
 
         # group extras into pmos/nmos
@@ -202,13 +324,15 @@ def main() -> None:
                 extra_nmos_transistors.transistors.append(item)
 
         # draw transistors
-        sch_output += create_xschem_transistor_row(
-            extra_pmos_transistors.transistors, constants.pmos_origin
-        )
-        sch_output += create_xschem_transistor_row(
-            extra_nmos_transistors.transistors, constants.nmos_origin
-        )
+        sch_output += create_inverters(
+            inverters, constants.inverter_origin)
         sch_output += create_parallel_transistors(
             parallel_transistors, constants.parallel_origin)
+        sch_output += create_xschem_transistor_row(
+            extra_pmos_transistors.transistors, constants.pmos_extra_origin
+        )
+        sch_output += create_xschem_transistor_row(
+            extra_nmos_transistors.transistors, constants.nmos_extra_origin
+        )
 
         outfile.write(sch_output)
