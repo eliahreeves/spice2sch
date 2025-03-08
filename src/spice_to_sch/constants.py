@@ -1,9 +1,12 @@
 from spice_to_sch.models import Point
 
 io_origin = Point(-120, -40)
-pmos_origin = Point(0, 0)
-nmos_origin = pmos_origin + Point(0, 200)
-parallel_origin = nmos_origin + Point(0, 200)
+
+inverter_origin = Point(120, 0)
+parallel_origin = inverter_origin + Point(0, 200)
+pmos_extra_origin = parallel_origin + Point(0, 200)
+nmos_extra_origin = pmos_extra_origin + Point(0, 200)
+
 spacing = 120
 file_header = """v {xschem version=3.4.6RC file_version=1.2
 }
