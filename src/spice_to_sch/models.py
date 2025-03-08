@@ -11,6 +11,18 @@ class Point:
         return Point(self.x + other.x, self.y + other.y)
 
 
+@dataclass
+class Wire:
+    start_x: int
+    start_y: int
+    end_x: int
+    end_y: int
+    label: str
+
+    def to_xschem(self) -> str:
+        return f"N {self.start_x} {self.start_y} {self.end_x} {self.end_y} {{lab={self.label}}}\n"
+
+
 class Transistor:
     def __init__(
         self,
@@ -55,6 +67,9 @@ class Transistor:
         return transistor
 
     def normalize(self):
+        if self.source > self.drain:
+            self.source, self.drain = self.drain, self.source
+
         if self.drain == "VPWR" or self.source == "VGND":
             self.drain, self.source = self.source, self.drain
 
