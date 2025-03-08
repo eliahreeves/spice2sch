@@ -3,7 +3,7 @@ name = "spice-to-sch"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-authors = [{ name = "Eliah Reeves", email = "ereeclimb@gmail.com" }]
+authors = [{ name = "Eliah Reeves", email = "ereeclimb@gmail.com" }, { name = "Eric Chuang", email = "ericchuang94@gmail.com" }]
 requires-python = ">=3.13"
 dependencies = []
 

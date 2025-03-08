@@ -143,6 +143,98 @@ def find_parallel_transistors(transistors: List[Transistor]) -> List[TransistorG
     return groups
 
 
+def find_series_transistors(transistors: List[Transistor]) -> List[TransistorGroup]:
+    groups: List[TransistorGroup] = []
+    i = 0
+
+    while i < len(transistors):
+        t1 = transistors[i]
+        series_group = [t1]
+        connected_nodes = {t1.source, t1.drain}
+        unconnected_nodes = set()
+
+        # Start with the initial transistor's terminal nodes
+        if len(series_group) == 1:
+            unconnected_nodes = {t1.source, t1.drain}
+
+        j = i + 1
+        while j < len(transistors):
+            t2 = transistors[j]
+
+            # Only consider same type transistors (PMOS with PMOS, NMOS with NMOS)
+            if t1.is_pmos == t2.is_pmos:
+                # Check if any terminal of t2 connects to any terminal in our connected group
+                if t2.source in connected_nodes or t2.drain in connected_nodes:
+                    series_group.append(t2)
+
+                    # Update connection tracking
+                    connected_nodes.add(t2.source)
+                    connected_nodes.add(t2.drain)
+
+                    # Remove from original list
+                    transistors.pop(j)
+                    continue
+            j += 1
+
+        # Only create a group if we found multiple transistors in series
+        if len(series_group) > 1:
+            # Sort the transistors in the actual connection order
+            ordered_series = []
+            remaining = series_group.copy()
+
+            # Find an endpoint transistor to start with (one with a terminal not connected to any other transistor)
+            endpoints = []
+            for t in series_group:
+                source_connections = sum(1 for other in series_group if other != t and (
+                    t.source == other.source or t.source == other.drain))
+                drain_connections = sum(1 for other in series_group if other != t and (
+                    t.drain == other.source or t.drain == other.drain))
+
+                if source_connections == 0 or drain_connections == 0:
+                    endpoints.append(t)
+
+            if endpoints:
+                current = endpoints[0]
+                ordered_series.append(current)
+                remaining.remove(current)
+
+                # Follow the chain of connections
+                while remaining:
+                    next_found = False
+                    current_source = current.source
+                    current_drain = current.drain
+
+                    for next_t in remaining:
+                        if next_t.source == current_drain or next_t.drain == current_source:
+                            ordered_series.append(next_t)
+                            current = next_t
+                            remaining.remove(next_t)
+                            next_found = True
+                            break
+                        elif next_t.drain == current_drain or next_t.source == current_source:
+                            ordered_series.append(next_t)
+                            current = next_t
+                            remaining.remove(next_t)
+                            next_found = True
+                            break
+
+                    if not next_found:
+                        # If we can't find a direct connection, just add the next available
+                        ordered_series.append(remaining[0])
+                        current = remaining[0]
+                        remaining.pop(0)
+
+                groups.append(TransistorGroup(ordered_series))
+            else:
+                groups.append(TransistorGroup(series_group))
+
+            transistors.pop(i)
+        else:
+            i += 1
+
+    return groups
+
+
 def create_single_transistor(
     transistor: Transistor,
     pos: Point,
@@ -249,10 +341,9 @@ def create_parallel_transistors(groups: List[TransistorGroup], origin: Point) ->
     current_x = origin.x
 
     for group in groups:
-        # Store the positions of transistors in this group for wire connections
         transistor_positions: List[Point] = []
 
-        # Create transistors in the group
+        # Create transistors
         for index, item in enumerate(group.transistors):
             pos = Point(current_x + (index * constants.spacing), origin.y)
             transistor_positions.append(pos)
@@ -287,6 +378,67 @@ def create_parallel_transistors(groups: List[TransistorGroup], origin: Point) ->
     return output
 
 
+def create_series_transistors(groups: List[TransistorGroup], origin: Point) -> str:
+    global p_value
+    output = ""
+    current_x = origin.x
+
+    for group in groups:
+        transistor_positions: List[Point] = []
+
+        # Find the external nodes (those that aren't shared between transistors)
+        all_nodes = []
+        for t in group.transistors:
+            all_nodes.append(t.source)
+            all_nodes.append(t.drain)
+
+        # Nodes that appear only once are external connections
+        node_counts = {}
+        for node in all_nodes:
+            if node in node_counts:
+                node_counts[node] += 1
+            else:
+                node_counts[node] = 1
+
+        external_nodes = [node for node,
+                          count in node_counts.items() if count == 1]
+
+        for index, item in enumerate(group.transistors):
+            pos = Point(current_x, origin.y +
+                        (index * constants.vertical_spacing))
+            transistor_positions.append(pos)
+
+            output += create_single_transistor(item, pos,
+                                               print_source=False, print_drain=False)
+
+        # external pins
+        if transistor_positions:
+            first_trans = group.transistors[0]
+            if first_trans.is_pmos:
+                top_node = first_trans.source if first_trans.source in external_nodes else first_trans.drain
+                output += f"C {{lab_pin.sym}} {transistor_positions[0].x + 20} {transistor_positions[0].y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={top_node}}}\n"
+                p_value += 1
+            else:
+                top_node = first_trans.drain if first_trans.drain in external_nodes else first_trans.source
+                output += f"C {{lab_pin.sym}} {transistor_positions[0].x + 20} {transistor_positions[0].y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={top_node}}}\n"
+                p_value += 1
+
+            last_trans = group.transistors[-1]
+            if last_trans.is_pmos:
+                bottom_node = last_trans.drain if last_trans.drain in external_nodes else last_trans.source
+                output += f"C {{lab_pin.sym}} {transistor_positions[-1].x + 20} {transistor_positions[-1].y + 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={bottom_node}}}\n"
+                p_value += 1
+            else:
+                bottom_node = last_trans.source if last_trans.source in external_nodes else last_trans.drain
+                output += f"C {{lab_pin.sym}} {transistor_positions[-1].x + 20} {transistor_positions[-1].y + 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={bottom_node}}}\n"
+                p_value += 1
+
+        # Update x position for next group
+        current_x += constants.spacing * 2
+
+    return output
+
+
 def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
@@ -313,6 +465,7 @@ def main() -> None:
         # sort
         inverters = find_inverters(transistors)
         parallel_transistors = find_parallel_transistors(transistors)
+        series_transistors = find_series_transistors(transistors)
 
         # group extras into pmos/nmos
         extra_pmos_transistors = TransistorGroup([])
@@ -328,6 +481,9 @@ def main() -> None:
             inverters, constants.inverter_origin)
         sch_output += create_parallel_transistors(
             parallel_transistors, constants.parallel_origin)
+        sch_output += create_series_transistors(
+            series_transistors, constants.series_origin
+        )
         sch_output += create_xschem_transistor_row(
             extra_pmos_transistors.transistors, constants.pmos_extra_origin
         )
