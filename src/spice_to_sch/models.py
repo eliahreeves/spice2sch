@@ -85,3 +85,29 @@ class Transistor:
 class TransistorGroup:
     def __init__(self, transistors: List[Transistor]):
         self.transistors = transistors
+
+
+class Inverter(TransistorGroup):
+    def __init__(self, pmos: Transistor, nmos: Transistor):
+        super().__init__([pmos, nmos])
+
+    @property
+    def nmos(self) -> Transistor:
+        return self.transistors[1]
+
+    @property
+    def pmos(self) -> Transistor:
+        return self.transistors[0]
+
+
+class TransmissionGate(TransistorGroup):
+    def __init__(self, pmos: Transistor, nmos: Transistor):
+        super().__init__([pmos, nmos])
+
+    @property
+    def nmos(self) -> Transistor:
+        return self.transistors[1]
+
+    @property
+    def pmos(self) -> Transistor:
+        return self.transistors[0]
