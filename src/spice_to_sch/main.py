@@ -281,8 +281,8 @@ def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> s
     current_x = origin.x
 
     for gate in gates:
-        pmos_pos = Point(current_x, origin.y - 40)  # should be 40
-        nmos_pos = Point(current_x, origin.y + 40)
+        pmos_pos = Point(current_x, origin.y - 80)  # should be 40
+        nmos_pos = Point(current_x, origin.y + 80)
 
         # Create both transistors
         output += create_single_transistor(
@@ -300,31 +300,31 @@ def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> s
             orientation=(3, 0),
         )
 
-        output += f"C {{lab_pin.sym}} {nmos_pos.x - 70} {nmos_pos.y - 40} 0 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.gate}}}\n"
+        output += f"C {{lab_pin.sym}} {nmos_pos.x - 70} {nmos_pos.y - 80} 0 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.drain}}}\n"
         p_value += 1
-        output += f"C {{lab_pin.sym}} {nmos_pos.x + 70} {nmos_pos.y - 40} 2 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.source}}}\n"
+        output += f"C {{lab_pin.sym}} {nmos_pos.x + 70} {nmos_pos.y - 80} 2 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.source}}}\n"
         p_value += 1
 
         # Create wires
         input_wire = Wire(
             start_x=nmos_pos.x - 30,
-            start_y=nmos_pos.y - 40,
+            start_y=nmos_pos.y - 80,
             end_x=nmos_pos.x - 70,
-            end_y=nmos_pos.y - 40,
+            end_y=nmos_pos.y - 80,
             label=gate.pmos.drain,
         )
         output += input_wire.to_xschem()
         input_wire = Wire(
             start_x=nmos_pos.x + 30,
-            start_y=nmos_pos.y - 40,
+            start_y=nmos_pos.y - 80,
             end_x=nmos_pos.x + 70,
-            end_y=nmos_pos.y - 40,
+            end_y=nmos_pos.y - 80,
             label=gate.pmos.drain,
         )
         output += input_wire.to_xschem()
         input_wire = Wire(
             start_x=nmos_pos.x + 30,
-            start_y=nmos_pos.y - 60,
+            start_y=nmos_pos.y - 140,
             end_x=nmos_pos.x + 30,
             end_y=nmos_pos.y - 20,
             label=gate.pmos.drain,
@@ -332,7 +332,7 @@ def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> s
         output += input_wire.to_xschem()
         input_wire = Wire(
             start_x=nmos_pos.x - 30,
-            start_y=nmos_pos.y - 60,
+            start_y=nmos_pos.y - 140,
             end_x=nmos_pos.x - 30,
             end_y=nmos_pos.y - 20,
             label=gate.pmos.drain,
