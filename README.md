@@ -1,6 +1,6 @@
 # spice-to-sch
 
-A CLI to convert SkyWater SKY130 spice files into xschem .sch files. Designed for [sifferman/sky130_schematics](https://github.com/sifferman/sky130_schematics). Available from [PyPi](https://pypi.org/project/spice-to-sch/).
+A CLI to convert SkyWater SKY130 spice files into xschem .sch files. Designed for [sifferman/sky130_schematics](https://github.com/sifferman/sky130_schematics). Available from [PyPI](https://pypi.org/project/spice-to-sch/).
 
 ## Use without installing
 
