@@ -59,7 +59,7 @@ def find_content(file: List[str]) -> List[str]:
         if line.lower().startswith(".subckt"):
             start = index
         elif line.lower().startswith(".ends"):
-            return file[start : index + 1]
+            return file[start: index + 1]
 
     raise ValueError("Invalid format")
 
@@ -147,6 +147,40 @@ def find_transmission_gates(
 #             i += 1
 
 #     return groups
+
+
+def find_identical_transistors(transistors: List[Transistor]) -> List[TransistorGroup]:
+    groups: List[TransistorGroup] = []
+    i = 0
+
+    while i < len(transistors):
+        t1 = transistors[i]
+        parallel_group = [t1]
+        j = i + 1
+
+        while j < len(transistors):
+            t2 = transistors[j]
+            if (t1.source == t2.source and
+                t1.drain == t2.drain and
+                t1.gate == t2.gate and
+                t1.body == t2.body and
+                t1.is_pmos == t2.is_pmos and
+                t1.width == t2.width and
+                t1.length == t2.length and
+                t1.name == t2.name and
+                    t1.library == t2.library):
+                parallel_group.append(t2)
+                transistors.pop(j)
+            else:
+                j += 1
+
+        if len(parallel_group) > 1:
+            groups.append(TransistorGroup(parallel_group))
+            transistors.pop(i)  # Remove the first transistor of the group
+        else:
+            i += 1
+
+    return groups
 
 
 def create_single_transistor(
@@ -345,47 +379,47 @@ def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> s
     return output
 
 
-# def create_parallel_transistors(groups: List[TransistorGroup], origin: Point) -> str:
-#     output = ""
-#     current_x = origin.x
+def create_parallel_transistors(groups: List[TransistorGroup], origin: Point) -> str:
+    output = ""
+    current_x = origin.x
 
-#     for group in groups:
-#         # Store the positions of transistors in this group for wire connections
-#         transistor_positions: List[Point] = []
+    for group in groups:
+        # Store the positions of transistors in this group for wire connections
+        transistor_positions: List[Point] = []
 
-#         # Create transistors in the group
-#         for index, item in enumerate(group.transistors):
-#             pos = Point(current_x + (index * constants.spacing), origin.y)
-#             transistor_positions.append(pos)
-#             output += create_single_transistor(item, pos)
+        # Create transistors in the group
+        for index, item in enumerate(group.transistors):
+            pos = Point(current_x + (index * constants.spacing), origin.y)
+            transistor_positions.append(pos)
+            output += create_single_transistor(item, pos)
 
-#         # Create wires
-#         if len(transistor_positions) > 1:
-#             first_trans = group.transistors[0]
+        # Create wires
+        if len(transistor_positions) > 1:
+            first_trans = group.transistors[0]
 
-#             source_wire = Wire(
-#                 start_x=transistor_positions[0].x + 20,
-#                 start_y=origin.y - 30,
-#                 end_x=transistor_positions[-1].x + 20,
-#                 end_y=origin.y - 30,
-#                 label=first_trans.source
-#             )
-#             output += source_wire.to_xschem()
+            source_wire = Wire(
+                start_x=transistor_positions[0].x + 20,
+                start_y=origin.y - 30,
+                end_x=transistor_positions[-1].x + 20,
+                end_y=origin.y - 30,
+                label=first_trans.source
+            )
+            output += source_wire.to_xschem()
 
-#             drain_wire = Wire(
-#                 start_x=transistor_positions[0].x + 20,
-#                 start_y=origin.y + 30,
-#                 end_x=transistor_positions[-1].x + 20,
-#                 end_y=origin.y + 30,
-#                 label=first_trans.drain
-#             )
-#             output += drain_wire.to_xschem()
+            drain_wire = Wire(
+                start_x=transistor_positions[0].x + 20,
+                start_y=origin.y + 30,
+                end_x=transistor_positions[-1].x + 20,
+                end_y=origin.y + 30,
+                label=first_trans.drain
+            )
+            output += drain_wire.to_xschem()
 
-#         # Update x position for next group
-#         current_x += (len(group.transistors) *
-#                       constants.spacing) + constants.spacing
+        # Update x position for next group
+        current_x += (len(group.transistors) *
+                      constants.spacing) + constants.spacing
 
-#     return output
+    return output
 
 
 def main() -> None:
@@ -429,18 +463,28 @@ def main() -> None:
         transmission_gates = find_transmission_gates(
             extra_pmos_transistors.transistors, extra_nmos_transistors.transistors
         )
+        pmos_identical = find_identical_transistors(
+            extra_pmos_transistors.transistors
+        )
+        nmos_identical = find_identical_transistors(
+            extra_nmos_transistors.transistors
+        )
         # draw transistors
         sch_output += create_inverters(inverters, constants.inverter_origin)
         sch_output += create_transmission_gates(
             transmission_gates, constants.transmission_gate_origin
         )
-        # sch_output += create_parallel_transistors(
-        #     parallel_transistors, constants.parallel_origin)
+        sch_output += create_parallel_transistors(
+            pmos_identical, constants.pmos_identical_origin)
+        sch_output += create_parallel_transistors(
+            nmos_identical, constants.nmos_identical_origin)
         sch_output += create_xschem_transistor_row(
             extra_pmos_transistors.transistors, constants.pmos_extra_origin
         )
         sch_output += create_xschem_transistor_row(
             extra_nmos_transistors.transistors, constants.nmos_extra_origin
         )
+        # sch_output += create_parallel_transistors(
+        #     parallel_transistors, constants.parallel_origin)
 
         outfile.write(sch_output)
