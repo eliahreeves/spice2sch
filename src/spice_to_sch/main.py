@@ -41,12 +41,12 @@ def extract_io_from_spice(subckt_line: str) -> Tuple[List[str], List[str]]:
 def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     global p_value
     output = ""
-    for input in pins[0]:
-        output += f"C {{ipin.sym}} {origin.x} {origin.y + p_value * 20} 0 0 {{name=p{p_value} lab={input}}}\n"
+    for index, input_pin in enumerate(pins[0]):
+        output += f"C {{ipin.sym}} {origin.x} {origin.y + index * 20} 0 0 {{name=p{p_value} lab={input_pin}}}\n"
         p_value += 1
 
     for index, output_pin in enumerate(pins[1]):
-        output += f"C {{opin.sym}} {origin.x + 20} {origin.y - (index + 1) * 20} 0 0 {{name=p{p_value} lab={output_pin}}}\n"
+        output += f"C {{opin.sym}} {origin.x + 20} {origin.y + index * 20} 0 0 {{name=p{p_value} lab={output_pin}}}\n"
         p_value += 1
 
     return output
