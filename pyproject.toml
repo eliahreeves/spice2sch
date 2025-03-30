@@ -1,6 +1,6 @@
 [project]
 name = "spice2sch"
-version = "0.1.3"
+version = "0.1.0"
 description = "A CLI to convert SkyWater SKY130 spice files into xschem .sch files."
 readme = "README.md"
 authors = [{ name = "Eliah Reeves", email = "ereeclimb@gmail.com" }]
