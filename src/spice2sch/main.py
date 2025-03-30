@@ -1,5 +1,5 @@
 from typing import List, Tuple
-from spice_to_sch.models import (
+from spice2sch.models import (
     Inverter,
     Point,
     TransmissionGate,
@@ -7,8 +7,8 @@ from spice_to_sch.models import (
     Transistor,
     TransistorGroup,
 )
-import spice_to_sch.constants as constants
-from spice_to_sch.cli_def import create_parser
+import spice2sch.constants as constants
+from spice2sch.cli_def import create_parser
 
 p_value = 0
 

@@ -1,12 +1,12 @@
-# spice-to-sch
+# spice2sch
 
-A CLI to convert SkyWater SKY130 spice files into xschem .sch files. Designed for [sifferman/sky130_schematics](https://github.com/sifferman/sky130_schematics). Available from [PyPI](https://pypi.org/project/spice-to-sch/).
+A CLI to convert SkyWater SKY130 spice files into xschem .sch files. Designed for [sifferman/sky130_schematics](https://github.com/sifferman/sky130_schematics). Available from [PyPI](https://pypi.org/project/spice2sch/).
 
 ## Use without installing
 
 ### For uv users
 ```bash
-uvx spice-to-sch -h
+uvx spice2sch -h
 ```
 
 ## Installation
@@ -14,13 +14,13 @@ uvx spice-to-sch -h
 ### For uv users (recommended)
 
 ```bash
-uv tool install spice_to_sch
+uv tool install spice2sch
 ```
 
 ### For pip users
 
 ```bash
-pip install spice_to_sch
+pip install spice2sch
 ```
 
 ## Usage
@@ -31,13 +31,13 @@ pip install spice_to_sch
 Specify and input .spice and and output .sch file.
 
 ```bash
-spice-to-sch -i file.spice -o file.sch
+spice2sch -i file.spice -o file.sch
 ```
 
 Input and output will default to stdin and stdout making this equivalent to the above command:
 
 ```bash
-cat file.spice | spice-to-sch > file.sch
+cat file.spice | spice2sch > file.sch
 ```
 
 ## Example
@@ -45,7 +45,7 @@ cat file.spice | spice-to-sch > file.sch
 1. Generate a sch file. The following command uses uvx to use the package without downloading, and pipes a spice netlist from the clipboard to the tool.
 
 ```bash
-wl-paste | uvx spice-to-sch -o sky130_fd_sc_hd__xor3_4.sch
+wl-paste | uvx spice2sch -o sky130_fd_sc_hd__xor3_4.sch
 ```
 
 2. Open the generated .sch file and manually arrange components.
@@ -64,15 +64,15 @@ wl-paste | uvx spice-to-sch -o sky130_fd_sc_hd__xor3_4.sch
 Clone the repo
 
 ```bash
-git clone git@github.com:eliahreeves/spice-to-sch.git
+git clone git@github.com:eliahreeves/spice2sch.git
 cd spice-to-sh
 ```
 
 Build and run
 
 ```bash
-uv run spice-to-sch
+uv run spice2sch
 ```
 
 > [!NOTE]
-> You may need to remove existing installations using `uv tool uninstall spice-to-sch` or similar in order to avoid namespace confilcts.
+> You may need to remove existing installations using `uv tool uninstall spice2sch` or similar in order to avoid namespace confilcts.

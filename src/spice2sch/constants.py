@@ -1,4 +1,4 @@
-from spice_to_sch.models import Point
+from spice2sch.models import Point
 
 io_origin = Point(-120, -40)
 

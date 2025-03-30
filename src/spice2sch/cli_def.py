@@ -6,7 +6,7 @@ import sys
 
 def get_version():
     try:
-        return version("spice-to-sch")
+        return version("spice2sch")
     except PackageNotFoundError:
         return "Unknown (not installed as a package)"
 
