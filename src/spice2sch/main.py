@@ -59,7 +59,7 @@ def find_content(file: List[str]) -> List[str]:
         if line.lower().startswith(".subckt"):
             start = index
         elif line.lower().startswith(".ends"):
-            return file[start : index + 1]
+            return file[start: index + 1]
 
     raise ValueError("Invalid format")
 
@@ -177,7 +177,7 @@ def create_single_transistor(
     output = ""
 
     # Create transistor symbol
-    output += f"C {{{transistor.library}/{transistor.name}.sym}} {pos.x} {pos.y} {orientation[0]} {orientation[1]} {{name=M{transistor.id}\nW={transistor.width}\nL={transistor.length}\nmodel={transistor.name}\nspiceprefix=X\n}}\n"
+    output += f"C {{{transistor.library}/{transistor.symbol_name}.sym}} {pos.x} {pos.y} {orientation[0]} {orientation[1]} {{name=M{transistor.id}\nW={transistor.width}\nL={transistor.length}\nmodel={transistor.name}\nspiceprefix=X\n}}\n"
 
     # Create body pin
     body_pos = pos

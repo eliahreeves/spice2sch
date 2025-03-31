@@ -30,6 +30,7 @@ class Transistor:
         width: str,
         library: str,
         name: str,
+        symbol_name: str,
         body: str,
         drain: str,
         gate: str,
@@ -40,6 +41,7 @@ class Transistor:
         self.width = width
         self.library = library
         self.name = name
+        self.symbol_name = symbol_name
         self.body = body
         self.drain = drain
         self.gate = gate
@@ -51,11 +53,18 @@ class Transistor:
         items = line.split(" ")
         library_name = items[-3].split("__")
 
+        full_name = library_name[1]
+        symbol_name = full_name
+
+        if "special_" in symbol_name:
+            symbol_name = symbol_name.replace("special_", "")
+
         transistor = cls(
             length=items[-1][2:],
             width=items[-2][2:],
             library=library_name[0],
-            name=library_name[1],
+            name=full_name,
+            symbol_name=symbol_name,
             body=items[-4],
             drain=items[-5],
             gate=items[-6],
