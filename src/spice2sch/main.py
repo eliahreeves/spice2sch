@@ -71,6 +71,16 @@ def remove_comments(content: List[str]) -> List[str]:
     return content
 
 
+def append_plus(content: List[str]) -> List[str]:
+    for index, line in enumerate(content):
+        strip_line = line.lstrip()
+        if strip_line.startswith("+"):
+            content[index - 1] += f" {strip_line[1:].lstrip()}"
+            content.remove(line)
+    print("\n".join(content))
+    return content
+
+
 def create_transistor_objects(spice: List[str]) -> List[Transistor]:
     transistors = [
         Transistor.from_spice_line(line, index)
@@ -409,6 +419,7 @@ def main() -> None:
         # includes .subckt and .ends
         spice_content_lines = find_content(spice_input_lines)
         spice_content_lines = remove_comments(spice_content_lines)
+        spice_content_lines = append_plus(spice_content_lines)
 
         sch_output = constants.file_header
 
