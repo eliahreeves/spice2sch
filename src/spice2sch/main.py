@@ -64,6 +64,13 @@ def find_content(file: List[str]) -> List[str]:
     raise ValueError("Invalid format")
 
 
+def remove_comments(content: List[str]) -> List[str]:
+    for line in content:
+        if line.startswith("*"):
+            content.remove(line)
+    return content
+
+
 def create_transistor_objects(spice: List[str]) -> List[Transistor]:
     transistors = [
         Transistor.from_spice_line(line, index)
@@ -401,6 +408,7 @@ def main() -> None:
 
         # includes .subckt and .ends
         spice_content_lines = find_content(spice_input_lines)
+        spice_content_lines = remove_comments(spice_content_lines)
 
         sch_output = constants.file_header
 
