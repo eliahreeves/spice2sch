@@ -77,7 +77,6 @@ def append_plus(content: List[str]) -> List[str]:
         if strip_line.startswith("+"):
             content[index - 1] += f" {strip_line[1:].lstrip()}"
             content.remove(line)
-    print("\n".join(content))
     return content
 
 
