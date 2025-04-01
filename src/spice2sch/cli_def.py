@@ -33,7 +33,7 @@ def create_parser() -> ArgumentParser:
     parser.add_argument(
         "-o",
         "--output-file",
-        type=FileType("w"),
+        type=str,
         default=sys.stdout,
         required=False,
         help="Output file to write to",

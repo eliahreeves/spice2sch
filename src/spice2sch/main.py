@@ -411,7 +411,7 @@ def main() -> None:
     if args.input_file is None:
         parser.error("No input provided. Use -i FILE or pipe data to stdin.")
 
-    with args.input_file as infile, args.output_file as outfile:
+    with args.input_file as infile:
         spice_input = infile.read()
         spice_input_lines = spice_input.split("\n")
 
@@ -461,4 +461,8 @@ def main() -> None:
             extra_nmos_transistors.transistors, constants.nmos_extra_origin
         )
 
-        outfile.write(sch_output)
+        if args.output_file:
+            with open(args.output_file, "w") as outfile:
+                outfile.write(sch_output)
+        else:
+            print(sch_output)
