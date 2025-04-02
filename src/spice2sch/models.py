@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import List
-
+from spice2sch.spice import SubcktCall
 
 @dataclass
 class Point:
@@ -26,8 +26,7 @@ class Wire:
 class Transistor:
     def __init__(
         self,
-        length: str,
-        width: str,
+        params: List[str],
         library: str,
         name: str,
         symbol_name: str,
@@ -37,8 +36,7 @@ class Transistor:
         source: str,
         id: int,
     ):
-        self.length = length
-        self.width = width
+        self.params = params
         self.library = library
         self.name = name
         self.symbol_name = symbol_name
@@ -49,9 +47,8 @@ class Transistor:
         self.id = id
 
     @classmethod
-    def from_spice_line(cls, line: str, index: int):
-        items = line.split(" ")
-        library_name = items[-3].split("__")
+    def from_subckt_call(cls, subckt_call: SubcktCall, index: int):
+        library_name = subckt_call.subckt_ref.split("__")
 
         full_name = library_name[1]
         symbol_name = full_name
@@ -59,16 +56,18 @@ class Transistor:
         if "special_" in symbol_name:
             symbol_name = symbol_name.replace("special_", "")
 
+        if "fet" not in symbol_name:
+            return None
+
         transistor = cls(
-            length=items[-1][2:],
-            width=items[-2][2:],
+            params=subckt_call.params,
             library=library_name[0],
             name=full_name,
             symbol_name=symbol_name,
-            body=items[-4],
-            drain=items[-5],
-            gate=items[-6],
-            source=items[-7],
+            body=subckt_call.nodes[3],
+            drain=subckt_call.nodes[2],
+            gate=subckt_call.nodes[1],
+            source=subckt_call.nodes[0],
             id=index,
         )
 

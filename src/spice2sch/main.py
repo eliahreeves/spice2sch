@@ -9,34 +9,9 @@ from spice2sch.models import (
 )
 import spice2sch.constants as constants
 from spice2sch.cli_def import create_parser
+from spice2sch.spice import Spice
 
 p_value = 0
-
-
-def extract_io_from_spice(subckt_line: str) -> Tuple[List[str], List[str]]:
-    tokens = subckt_line.split()
-    if len(tokens) < 3:
-        raise ValueError("Invalid format")
-
-    ports = tokens[2:]
-
-    power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB"}
-
-    inputs: List[str] = []
-    outputs: List[str] = []
-    found_inputs = False
-
-    for port in ports:
-        is_port_power_ground = port in power_ground
-        if is_port_power_ground:
-            found_inputs = True
-
-        if not found_inputs or is_port_power_ground:
-            inputs.append(port)
-        else:
-            outputs.append(port)
-    return (inputs, outputs)
-
 
 def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     global p_value
@@ -52,39 +27,12 @@ def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     return output
 
 
-def find_content(file: List[str]) -> List[str]:
-    start = 0
-    for index, line in enumerate(file):
-        line = line.strip()
-        if line.lower().startswith(".subckt"):
-            start = index
-        elif line.lower().startswith(".ends"):
-            return file[start: index + 1]
-
-    raise ValueError("Invalid format")
-
-
-def remove_comments(content: List[str]) -> List[str]:
-    for line in content:
-        if line.startswith("*"):
-            content.remove(line)
-    return content
-
-
-def append_plus(content: List[str]) -> List[str]:
-    for index, line in enumerate(content):
-        strip_line = line.lstrip()
-        if strip_line.startswith("+"):
-            content[index - 1] += f" {strip_line[1:].lstrip()}"
-            content.remove(line)
-    return content
-
-
-def create_transistor_objects(spice: List[str]) -> List[Transistor]:
-    transistors = [
-        Transistor.from_spice_line(line, index)
-        for index, line in enumerate(spice[1:-1])
-    ]
+def create_transistor_objects(spice: Spice) -> List[Transistor]:
+    transistors = []
+    for index, call in enumerate(spice.extract_subckt_calls()):
+        t = Transistor.from_subckt_call(call, index)
+        if t is not None:
+            transistors.append(t)
     # Sort transistors by gate name alphabetically
     return sorted(transistors, key=lambda x: x.gate.lower())
 
@@ -176,8 +124,23 @@ def create_single_transistor(
     global p_value
     output = ""
 
+    # make parameter names uppercase
+    fixed_transistor_params = []
+    for param in transistor.params:
+        name, value = param.split("=")
+        fixed_transistor_params.append(f"{name.upper()}={value}")
+
     # Create transistor symbol
-    output += f"C {{{transistor.library}/{transistor.symbol_name}.sym}} {pos.x} {pos.y} {orientation[0]} {orientation[1]} {{name=M{transistor.id}\nW={transistor.width}\nL={transistor.length}\nmodel={transistor.name}\nspiceprefix=X\n}}\n"
+    newline = "\n"
+    output += (
+        f"C {{{transistor.library}/{transistor.symbol_name}.sym}} {pos.x} {pos.y} {orientation[0]} {orientation[1]} "
+        "{"
+        f"name=M{transistor.id}\n"
+        f"{newline.join(fixed_transistor_params)}\n"
+        f"model={transistor.name}\n"
+        "spiceprefix=X\n"
+        "}\n"
+    )
 
     # Create body pin
     body_pos = pos
@@ -413,21 +376,16 @@ def main() -> None:
 
     with args.input_file as infile:
         spice_input = infile.read()
-        spice_input_lines = spice_input.split("\n")
-
-        # includes .subckt and .ends
-        spice_content_lines = find_content(spice_input_lines)
-        spice_content_lines = remove_comments(spice_content_lines)
-        spice_content_lines = append_plus(spice_content_lines)
+        spice_file = Spice(spice_input)
 
         sch_output = constants.file_header
 
         # create io_pins
-        io_pins = extract_io_from_spice(spice_content_lines[0])
+        io_pins = spice_file.extract_io()
         sch_output += create_io_block(io_pins, constants.io_origin)
 
         # create list of transistors
-        transistors = create_transistor_objects(spice_content_lines)
+        transistors = create_transistor_objects(spice_file)
 
         # sort
         # parallel_transistors = find_parallel_transistors(transistors)
