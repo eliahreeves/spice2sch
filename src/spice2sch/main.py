@@ -84,35 +84,6 @@ def find_transmission_gates(
             p_index += 1
     return groups
 
-
-# def find_parallel_transistors(transistors: List[Transistor]) -> List[TransistorGroup]:
-#     groups: List[TransistorGroup] = []
-#     i = 0
-
-#     while i < len(transistors):
-#         t1 = transistors[i]
-#         parallel_group = [t1]
-#         j = i + 1
-
-#         while j < len(transistors):
-#             t2 = transistors[j]
-#             if (t1.source == t2.source and
-#                 t1.drain == t2.drain and
-#                     t1.is_pmos == t2.is_pmos):
-#                 parallel_group.append(t2)
-#                 transistors.pop(j)  # Remove from list if it's parallel
-#             else:
-#                 j += 1
-
-#         if len(parallel_group) > 1:
-#             groups.append(TransistorGroup(parallel_group))
-#             transistors.pop(i)  # Remove the first transistor of the group
-#         else:
-#             i += 1
-
-#     return groups
-
-
 def create_single_transistor(
     transistor: Transistor,
     pos: Point,
@@ -323,50 +294,6 @@ def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> s
 
     return output
 
-
-# def create_parallel_transistors(groups: List[TransistorGroup], origin: Point) -> str:
-#     output = ""
-#     current_x = origin.x
-
-#     for group in groups:
-#         # Store the positions of transistors in this group for wire connections
-#         transistor_positions: List[Point] = []
-
-#         # Create transistors in the group
-#         for index, item in enumerate(group.transistors):
-#             pos = Point(current_x + (index * constants.spacing), origin.y)
-#             transistor_positions.append(pos)
-#             output += create_single_transistor(item, pos)
-
-#         # Create wires
-#         if len(transistor_positions) > 1:
-#             first_trans = group.transistors[0]
-
-#             source_wire = Wire(
-#                 start_x=transistor_positions[0].x + 20,
-#                 start_y=origin.y - 30,
-#                 end_x=transistor_positions[-1].x + 20,
-#                 end_y=origin.y - 30,
-#                 label=first_trans.source
-#             )
-#             output += source_wire.to_xschem()
-
-#             drain_wire = Wire(
-#                 start_x=transistor_positions[0].x + 20,
-#                 start_y=origin.y + 30,
-#                 end_x=transistor_positions[-1].x + 20,
-#                 end_y=origin.y + 30,
-#                 label=first_trans.drain
-#             )
-#             output += drain_wire.to_xschem()
-
-#         # Update x position for next group
-#         current_x += (len(group.transistors) *
-#                       constants.spacing) + constants.spacing
-
-#     return output
-
-
 def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
@@ -386,9 +313,6 @@ def main() -> None:
 
         # create list of transistors
         transistors = create_transistor_objects(spice_file)
-
-        # sort
-        # parallel_transistors = find_parallel_transistors(transistors)
 
         # group extras into pmos/nmos
         extra_pmos_transistors = TransistorGroup([])
@@ -410,8 +334,6 @@ def main() -> None:
         sch_output += create_transmission_gates(
             transmission_gates, constants.transmission_gate_origin
         )
-        # sch_output += create_parallel_transistors(
-        #     parallel_transistors, constants.parallel_origin)
         sch_output += create_xschem_transistor_row(
             extra_pmos_transistors.transistors, constants.pmos_extra_origin
         )
