@@ -38,6 +38,15 @@ def create_parser() -> ArgumentParser:
         required=False,
         help="Output file to write to",
     )
+    parser.add_argument(
+        "-p",
+        "--pdk",
+        type=str,
+        choices=["sky130", "gf180", "infer"],
+        default="infer",
+        required=False,
+        help="PDK to use (sky130, gf180, or infer)",
+    )
 
     def error_and_exit(message: str) -> NoReturn:
         print(f"Error: {message}\n", file=sys.stderr)
