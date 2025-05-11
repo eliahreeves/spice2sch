@@ -30,7 +30,7 @@ def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
 def create_transistor_objects(spice: Spice) -> List[Transistor]:
     transistors = []
     for index, call in enumerate(spice.extract_subckt_calls()):
-        t = Transistor.from_subckt_call(call, index)
+        t = Transistor.from_subckt_call(call, index, spice.pdk)
         if t is not None:
             transistors.append(t)
     # Sort transistors by gate name alphabetically
@@ -303,7 +303,7 @@ def main() -> None:
 
     with args.input_file as infile:
         spice_input = infile.read()
-        spice_file = Spice(spice_input)
+        spice_file = Spice(spice_input, args.pdk)
 
         sch_output = constants.file_header
 

@@ -3,8 +3,8 @@ from typing import List, Tuple
 class SubcktCall:
     name: str
     nodes: List[str]
-    subckt_ref: str
-    params: List[Tuple[str, float]]
+    component: str
+    params: List[str]
 
     def __init__(self, call_str: str):
         tokens = call_str.split()
@@ -12,26 +12,40 @@ class SubcktCall:
             raise ValueError("Input string is empty")
 
         self.name = tokens[0]
-        if not self.name.startswith("x") and not self.name.startswith("X"):
-            raise ValueError("Subckt call must begin with X")
+        # This conditional causes errors with gf180 and it seems like it doesn't provide useful error checking
+        # if not self.name.startswith("x") and not self.name.startswith("X"):
+        #     raise ValueError("Subckt call must begin with X")
 
+        # this loop iterates backwards through the list
         param_index = len(tokens)-1
 
         while "=" in tokens[param_index]:
             param_index -= 1
 
         self.nodes = tokens[1:param_index]
-        self.subckt_ref = tokens[param_index]
+        self.component = tokens[param_index]
         self.params = tokens[param_index+1:]
 
 
 class Spice:
+    pdk: str
     content: List[str]
-    def __init__(cls, spice_input) -> "Spice":
-        cls.content = spice_input.split("\n")
-        cls.__remove_comments()
-        cls.__append_plus()
-        cls.__reduce_to_subckt_definition()
+    def __init__(self, spice_input: str, pdk: str):
+        self.content = spice_input.split("\n")
+        self.__remove_comments()
+        self.__append_plus()
+        self.__reduce_to_subckt_definition()
+        if pdk == "infer":
+            if 'gf180' in self.content[0]:
+                self.pdk = 'gf180'
+            elif 'sky130' in self.content[0]:
+                self.pdk = 'sky130'
+            else:
+                raise ValueError("Could not infer PDK")
+        else:
+            self.pdk = pdk
+
+
 
     def extract_subckt_calls(self) -> List[SubcktCall]:
         return [SubcktCall(subckt_call) for subckt_call in self.content[1:-1]]
@@ -45,7 +59,7 @@ class Spice:
 
         ports = tokens[2:]
 
-        power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB", "VPWRIN", "LOWLVPWR"}
+        power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB", "VPWRIN", "LOWLVPWR", "VNW", "VPW"}
 
         inputs: List[str] = []
         outputs: List[str] = []

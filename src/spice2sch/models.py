@@ -47,17 +47,23 @@ class Transistor:
         self.id = id
 
     @classmethod
-    def from_subckt_call(cls, subckt_call: SubcktCall, index: int):
-        library_name = subckt_call.subckt_ref.split("__")
+    def from_subckt_call(cls, subckt_call: SubcktCall, index: int, pdk: str):
+        if pdk == "sky130":
+            library_name = subckt_call.component.split("__")
+    
+            full_name = library_name[1]
+            symbol_name = full_name
+    
+            if "special_" in symbol_name:
+                symbol_name = symbol_name.replace("special_", "")
+    
+            if "fet" not in symbol_name:
+                return None
 
-        full_name = library_name[1]
-        symbol_name = full_name
-
-        if "special_" in symbol_name:
-            symbol_name = symbol_name.replace("special_", "")
-
-        if "fet" not in symbol_name:
-            return None
+        else: 
+            library_name = "HZHZZZZZ"
+            full_name = "YYYYY"
+            symbol_name = "XXXXX"
 
         transistor = cls(
             params=subckt_call.params,

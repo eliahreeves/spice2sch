@@ -34,7 +34,6 @@ def create_parser() -> ArgumentParser:
         "-o",
         "--output-file",
         type=str,
-        default=sys.stdout,
         required=False,
         help="Output file to write to",
     )
