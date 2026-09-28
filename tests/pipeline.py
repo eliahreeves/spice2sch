@@ -65,6 +65,40 @@ def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
     return netlist_path
 
 
+def generate_svg(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
+    """Export an SVG for a schematic via xschem, matching sky130_schematics."""
+    log_path = workdir / "logs" / f"{cell_name}.svg.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    svg_path = workdir / "svg" / f"{cell_name}.svg"
+    svg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [
+            "xschem",
+            "--no_x",
+            "--log",
+            str(log_path),
+            "--script",
+            str(SCRIPTS_DIR / "generate_svg.tcl"),
+        ],
+        cwd=workdir,
+        env={
+            **_passthrough_env(pdk_root),
+            "SCHEMATIC": cell_name,
+            "PWD": str(workdir),
+        },
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not svg_path.exists():
+        raise PipelineError(
+            f"xschem SVG export failed for {cell_name}:\n"
+            f"{result.stdout}\n{result.stderr}\n"
+            f"(see {log_path})"
+        )
+    return svg_path
+
+
 @dataclass
 class LvsResult:
     passed: bool
