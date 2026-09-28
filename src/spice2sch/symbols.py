@@ -139,9 +139,7 @@ class SymbolIndex:
     @property
     def library_dirs(self) -> list[Path]:
         return sorted(
-            path
-            for path in self.pdk_root.glob("*/libs.tech/xschem/*")
-            if path.is_dir()
+            path for path in self.pdk_root.glob("*/libs.tech/xschem/*") if path.is_dir()
         )
 
     def _load(self) -> None:

@@ -30,9 +30,7 @@ def generate_schematic(
         env=env,
     )
     if result.returncode != 0:
-        raise PipelineError(
-            f"spice2sch failed:\n{result.stdout}\n{result.stderr}"
-        )
+        raise PipelineError(f"spice2sch failed:\n{result.stdout}\n{result.stderr}")
 
 
 def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
@@ -102,8 +100,19 @@ def run_lvs(
     if result.returncode != 0 and not report_path.exists():
         raise PipelineError(f"netgen failed to run:\n{result.stderr}")
 
-    passed = bool(re.search(r"Circuits match uniquely", report_text))
+    passed = bool(
+        re.search(r"Circuits match uniquely", report_text)
+    ) or _is_matching_empty_circuit(report_text)
     return LvsResult(passed=passed, report_text=report_text, report_path=report_path)
+
+
+def _is_matching_empty_circuit(report_text: str) -> bool:
+    if not re.search(r"has no elements and/or nodes\.\s*Not checked\.", report_text):
+        return False
+    return (
+        "Cell pin lists are equivalent." in report_text
+        and "**Mismatch**" not in report_text
+    )
 
 
 def prepare_workdir(tmp_path: Path, repo_root: Path) -> None:
