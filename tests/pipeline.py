@@ -14,14 +14,25 @@ class PipelineError(RuntimeError):
     clean LVS mismatch, which is reported as a normal test failure."""
 
 
-def generate_schematic(reference_spice: Path, out_sch: Path) -> None:
+def generate_schematic(
+    reference_spice: Path, out_sch: Path, pdk_root: Path | None = None
+) -> None:
+    import os
+
+    env = os.environ.copy()
+    if pdk_root is not None:
+        env["PDK_ROOT"] = str(pdk_root)
+
     result = subprocess.run(
         ["uv", "run", "spice2sch", "-i", str(reference_spice), "-o", str(out_sch)],
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
-        raise PipelineError(f"spice2sch failed:\n{result.stderr}")
+        raise PipelineError(
+            f"spice2sch failed:\n{result.stdout}\n{result.stderr}"
+        )
 
 
 def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:

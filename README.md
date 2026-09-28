@@ -56,7 +56,8 @@ wl-paste | uvx spice2sch -o sky130_fd_sc_hd__xor3_4.sch
 
 ## Limitations
 
-- Currently this program will assume all components are transistors. Using this on a .spice file with other components will not work.
+- All devices (transistors, resistors, diodes, …) are placed by looking up xschem symbols under `PDK_ROOT` (`--pdk-root` or the `PDK_ROOT` env var), so a PDK root is required for any design with devices. Any PDK laid out the open_pdks way (`<variant>/libs.tech/xschem/<library>/*.sym`, with SPICE subckt refs of the form `<library>__<model>`) is supported, not just SkyWater SKY130.
+- Hierarchical standard-cell instances (e.g. `macro_sparecell`) are not expanded.
 - Although schematics will pass a Layout Versus Schematic (LVS) check, all components must be manually rearranged.
 
 ## Running from source with uv

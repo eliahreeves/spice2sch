@@ -1,17 +1,21 @@
-from typing import List, Tuple
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import List, Optional, Tuple
+
 from spice2sch.models import (
-    Inverter,
     Point,
-    TransmissionGate,
+    Primitive,
     Wire,
-    Transistor,
-    TransistorGroup,
 )
 import spice2sch.constants as constants
 from spice2sch.cli_def import create_parser
-from spice2sch.spice import Spice
+from spice2sch.spice import Spice, SubcktCall
+from spice2sch.symbols import SymbolIndex
 
 p_value = 0
+
 
 def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     global p_value
@@ -27,272 +31,82 @@ def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
     return output
 
 
-def create_transistor_objects(spice: Spice) -> List[Transistor]:
-    transistors = []
-    for index, call in enumerate(spice.extract_subckt_calls()):
-        t = Transistor.from_subckt_call(call, index)
-        if t is not None:
-            transistors.append(t)
-    # Sort transistors by gate name alphabetically
-    return sorted(transistors, key=lambda x: x.gate.lower())
+def create_primitive_objects(
+    calls: List[SubcktCall], symbol_index: Optional[SymbolIndex]
+) -> List[Primitive]:
+    primitives: List[Primitive] = []
+    if not calls:
+        return primitives
+
+    if symbol_index is None:
+        refs = ", ".join(sorted({call.subckt_ref for call in calls}))
+        raise SystemExit(
+            "Devices require a PDK root for symbol lookup "
+            f"(set PDK_ROOT or pass --pdk-root). Found: {refs}"
+        )
+
+    for index, call in enumerate(calls):
+        symbol = symbol_index.resolve(call.subckt_ref)
+        if symbol is None:
+            print(
+                f"Warning: no PDK symbol for {call.subckt_ref}; skipping",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            primitives.append(Primitive.from_subckt_call(call, index, symbol))
+        except ValueError as exc:
+            print(f"Warning: {exc}; skipping", file=sys.stderr)
+
+    return primitives
 
 
-def find_inverters(pmos: List[Transistor], nmos: List[Transistor]) -> List[Inverter]:
-    groups: List[Inverter] = []
-    p_index = 0
-    while p_index < len(pmos):
-        p_item = pmos[p_index]
-        for n_index, n_item in enumerate(nmos):
-            # Check if transistors share a connection
-            shared_node = None
-            if p_item.source in [n_item.source, n_item.drain]:
-                shared_node = p_item.source
-            elif p_item.drain in [n_item.source, n_item.drain]:
-                shared_node = p_item.drain
-
-            if shared_node is None:
-                continue
-            # Check if other connections are VPWR and VGND
-            p_other = p_item.drain if p_item.source == shared_node else p_item.source
-            n_other = n_item.drain if n_item.source == shared_node else n_item.source
-            if p_other == "VPWR" and n_other == "VGND":
-                groups.append(Inverter(p_item, n_item))
-                del pmos[p_index]
-                del nmos[n_index]
-                break
-        else:
-            p_index += 1
-    return groups
+def _lab_pin_orientation(pin_x: float, pin_y: float) -> Tuple[int, int]:
+    if abs(pin_x) >= abs(pin_y):
+        return (2, 0) if pin_x >= 0 else (0, 0)
+    return (3, 0) if pin_y >= 0 else (1, 0)
 
 
-def find_transmission_gates(
-    pmos: List[Transistor], nmos: List[Transistor]
-) -> List[TransmissionGate]:
-    groups: List[TransmissionGate] = []
-    p_index = 0
-    while p_index < len(pmos):
-        p_item = pmos[p_index]
-        for n_index, n_item in enumerate(nmos):
-            if (p_item.source == n_item.source and p_item.drain == n_item.drain) or (
-                p_item.source == n_item.drain and p_item.drain == n_item.source
-            ):
-                groups.append(TransmissionGate(p_item, n_item))
-                del pmos[p_index]
-                del nmos[n_index]
-                break
-        else:
-            p_index += 1
-    return groups
-
-def create_single_transistor(
-    transistor: Transistor,
-    pos: Point,
-    print_source: bool = True,
-    print_drain: bool = True,
-    print_gate: bool = True,
-    orientation: Tuple[int, int] = (0, 0),
-) -> str:
+def create_single_primitive(primitive: Primitive, pos: Point) -> str:
     global p_value
     output = ""
 
-    # make parameter names uppercase
-    fixed_transistor_params = []
-    for param in transistor.params:
-        name, value = param.split("=")
-        fixed_transistor_params.append(f"{name.upper()}={value}")
+    attr_lines = [f"name={primitive.instance_name}"]
+    for param in primitive.params:
+        name, value = param.split("=", 1)
+        canonical = primitive.symbol.normalize_param_name(name)
+        attr_lines.append(f"{canonical}={value}")
+    attr_lines.append(f"model={primitive.model}")
+    attr_lines.append("spiceprefix=X")
 
-    # Create transistor symbol
     newline = "\n"
     output += (
-        f"C {{{transistor.library}/{transistor.symbol_name}.sym}} {pos.x} {pos.y} {orientation[0]} {orientation[1]} "
+        f"C {{{primitive.symbol.sch_path}}} {pos.x} {pos.y} 0 0 "
         "{"
-        f"name=M{transistor.id}\n"
-        f"{newline.join(fixed_transistor_params)}\n"
-        f"model={transistor.name}\n"
-        "spiceprefix=X\n"
+        f"{newline.join(attr_lines)}"
         "}\n"
     )
 
-    # Create body pin
-    body_pos = pos
-    body_orientation = (2, 0)
-    if orientation == (0, 0):
-        body_pos += Point(20, 0)
-    # pmos in transmission_gates
-    elif orientation == (1, 0):
-        body_pos += Point(0, 20)
-        body_orientation = (3, 0)
-    # pmos in transmission_gates
-    elif orientation == (3, 0):
-        body_pos += Point(0, -20)
-        body_orientation = (1, 0)
-    output += f"C {{lab_pin.sym}} {body_pos.x} {body_pos.y} {body_orientation[0]} {body_orientation[1]} {{name=p{p_value} sig_type=std_logic lab={transistor.body}}}\n"
-    p_value += 1
-
-    # Create source pin
-    if print_source:
-        source_pos = pos
-        if orientation == (0, 0):
-            source_pos += Point(20, -30)
-        output += f"C {{lab_pin.sym}} {source_pos.x} {source_pos.y} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.source}}}\n"
-        p_value += 1
-
-    # Create drain pin
-    if print_drain:
-        drain_pos = pos
-        if orientation == (0, 0):
-            drain_pos += Point(20, 30)
-        output += f"C {{lab_pin.sym}} {drain_pos.x} {drain_pos.y} 2 0 {{name=p{p_value} sig_type=std_logic lab={transistor.drain}}}\n"
-        p_value += 1
-
-    # Create gate pin
-    if print_gate:
-        gate_pos = pos
-        if orientation == (0, 0):
-            gate_pos += Point(-20, 0)
-        elif orientation == (1, 0):
-            gate_pos += Point(0, -20)
-        elif orientation == (3, 0):
-            gate_pos += Point(0, 20)
-
-        output += f"C {{lab_pin.sym}} {gate_pos.x} {gate_pos.y} 0 0 {{name=p{p_value} sig_type=std_logic lab={transistor.gate}}}\n"
+    for node, pin in zip(primitive.nodes, primitive.symbol.pins):
+        pin_x = int(round(pos.x + pin.x))
+        pin_y = int(round(pos.y + pin.y))
+        orient = _lab_pin_orientation(pin.x, pin.y)
+        output += (
+            f"C {{lab_pin.sym}} {pin_x} {pin_y} {orient[0]} {orient[1]} "
+            f"{{name=p{p_value} sig_type=std_logic lab={node}}}\n"
+        )
         p_value += 1
 
     return output
 
 
-def create_xschem_transistor_row(transistors: List[Transistor], origin: Point) -> str:
+def create_xschem_primitive_row(primitives: List[Primitive], origin: Point) -> str:
     output = ""
-    for index, item in enumerate(transistors):
+    for index, item in enumerate(primitives):
         pos = Point(origin.x + (index * constants.spacing), origin.y)
-        output += create_single_transistor(item, pos)
+        output += create_single_primitive(item, pos)
     return output
 
-
-def create_inverters(inverters: List[Inverter], origin: Point) -> str:
-    global p_value
-    output = ""
-    current_x = origin.x
-
-    for inverter in inverters:
-        pmos_pos = Point(current_x, origin.y - 30)
-        nmos_pos = Point(current_x, origin.y + 30)
-
-        # Create both transistors
-        output += create_single_transistor(
-            inverter.pmos, pmos_pos, print_drain=False, print_gate=False
-        )
-        output += create_single_transistor(
-            inverter.nmos, nmos_pos, print_source=False, print_gate=False
-        )
-
-        output += f"C {{lab_pin.sym}} {nmos_pos.x - 60} {nmos_pos.y - 30} 0 0 {{name=p{p_value} sig_type=std_logic lab={inverter.nmos.gate}}}\n"
-        p_value += 1
-        output += f"C {{lab_pin.sym}} {nmos_pos.x + 140} {nmos_pos.y - 30} 2 0 {{name=p{p_value} sig_type=std_logic lab={inverter.nmos.source}}}\n"
-        p_value += 1
-
-        # Create wires
-        input_wire = Wire(
-            start_x=nmos_pos.x - 20,
-            start_y=nmos_pos.y - 30,
-            end_x=nmos_pos.x - 60,
-            end_y=nmos_pos.y - 30,
-            label=inverter.pmos.drain,
-        )
-        output += input_wire.to_xschem()
-
-        connecting_wire = Wire(
-            start_x=pmos_pos.x - 20,
-            start_y=pmos_pos.y,
-            end_x=nmos_pos.x - 20,
-            end_y=nmos_pos.y,
-            label=inverter.pmos.drain,
-        )
-        output += connecting_wire.to_xschem()
-
-        output_wire = Wire(
-            start_x=nmos_pos.x + 20,
-            start_y=nmos_pos.y - 30,
-            end_x=nmos_pos.x + 140,
-            end_y=nmos_pos.y - 30,
-            label=inverter.pmos.drain,
-        )
-        output += output_wire.to_xschem()
-
-        # Update x position for next inverter
-        current_x += constants.spacing * 3
-
-    return output
-
-
-def create_transmission_gates(gates: List[TransmissionGate], origin: Point) -> str:
-    global p_value
-    output = ""
-    current_x = origin.x
-
-    for gate in gates:
-        pmos_pos = Point(current_x, origin.y - 80)  # should be 40
-        nmos_pos = Point(current_x, origin.y + 80)
-
-        # Create both transistors
-        output += create_single_transistor(
-            gate.pmos,
-            pmos_pos,
-            print_drain=False,
-            print_source=False,
-            orientation=(1, 0),
-        )
-        output += create_single_transistor(
-            gate.nmos,
-            nmos_pos,
-            print_source=False,
-            print_drain=False,
-            orientation=(3, 0),
-        )
-
-        output += f"C {{lab_pin.sym}} {nmos_pos.x - 70} {nmos_pos.y - 80} 0 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.drain}}}\n"
-        p_value += 1
-        output += f"C {{lab_pin.sym}} {nmos_pos.x + 70} {nmos_pos.y - 80} 2 0 {{name=p{p_value} sig_type=std_logic lab={gate.nmos.source}}}\n"
-        p_value += 1
-
-        # Create wires
-        input_wire = Wire(
-            start_x=nmos_pos.x - 30,
-            start_y=nmos_pos.y - 80,
-            end_x=nmos_pos.x - 70,
-            end_y=nmos_pos.y - 80,
-            label=gate.pmos.drain,
-        )
-        output += input_wire.to_xschem()
-        input_wire = Wire(
-            start_x=nmos_pos.x + 30,
-            start_y=nmos_pos.y - 80,
-            end_x=nmos_pos.x + 70,
-            end_y=nmos_pos.y - 80,
-            label=gate.pmos.drain,
-        )
-        output += input_wire.to_xschem()
-        input_wire = Wire(
-            start_x=nmos_pos.x + 30,
-            start_y=nmos_pos.y - 140,
-            end_x=nmos_pos.x + 30,
-            end_y=nmos_pos.y - 20,
-            label=gate.pmos.drain,
-        )
-        output += input_wire.to_xschem()
-        input_wire = Wire(
-            start_x=nmos_pos.x - 30,
-            start_y=nmos_pos.y - 140,
-            end_x=nmos_pos.x - 30,
-            end_y=nmos_pos.y - 20,
-            label=gate.pmos.drain,
-        )
-        output += input_wire.to_xschem()
-
-        # Update x position for next inverter
-        current_x += constants.spacing * 3
-
-    return output
 
 def main() -> None:
     parser = create_parser()
@@ -311,34 +125,20 @@ def main() -> None:
         io_pins = spice_file.extract_io()
         sch_output += create_io_block(io_pins, constants.io_origin)
 
-        # create list of transistors
-        transistors = create_transistor_objects(spice_file)
+        calls = spice_file.extract_subckt_calls()
 
-        # group extras into pmos/nmos
-        extra_pmos_transistors = TransistorGroup([])
-        extra_nmos_transistors = TransistorGroup([])
-        for item in transistors:
-            if item.is_pmos:
-                extra_pmos_transistors.transistors.append(item)
-            else:
-                extra_nmos_transistors.transistors.append(item)
+        symbol_index = None
+        if args.pdk_root:
+            try:
+                symbol_index = SymbolIndex(Path(args.pdk_root))
+            except FileNotFoundError as exc:
+                parser.error(str(exc))
 
-        inverters = find_inverters(
-            extra_pmos_transistors.transistors, extra_nmos_transistors.transistors
-        )
-        transmission_gates = find_transmission_gates(
-            extra_pmos_transistors.transistors, extra_nmos_transistors.transistors
-        )
-        # draw transistors
-        sch_output += create_inverters(inverters, constants.inverter_origin)
-        sch_output += create_transmission_gates(
-            transmission_gates, constants.transmission_gate_origin
-        )
-        sch_output += create_xschem_transistor_row(
-            extra_pmos_transistors.transistors, constants.pmos_extra_origin
-        )
-        sch_output += create_xschem_transistor_row(
-            extra_nmos_transistors.transistors, constants.nmos_extra_origin
+        # create list of devices (FET and non-FET alike) via PDK symbol lookup
+        primitives = create_primitive_objects(calls, symbol_index)
+
+        sch_output += create_xschem_primitive_row(
+            primitives, constants.primitive_origin
         )
 
         if args.output_file:
