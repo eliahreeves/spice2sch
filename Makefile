@@ -12,7 +12,7 @@ $(CELLS_DIR):
 test-full: $(CELLS_DIR)
 	ciel enable --pdk-family sky130 $(PDK_HASH)
 	PDK_ROOT=$(PDK_ROOT) SKY130_CELLS=$(abspath $(CELLS_DIR)) \
-		uv run pytest tests -rs
+		uv run pytest tests -n auto -rs
 
 test: $(CELLS_DIR)
 	ciel enable --pdk-family sky130 $(PDK_HASH)
