@@ -167,4 +167,18 @@ class SymbolIndex:
         library, sep, model = subckt_ref.partition("__")
         if not sep:
             return None
-        return self._by_key.get((library, model))
+        symbol = self._by_key.get((library, model))
+        if symbol is not None:
+            return symbol
+
+        # Some PDKs (e.g. sky130) ship device variants such as
+        # "special_nfet_01v8" that reuse the exact pinout of a base
+        # device ("nfet_01v8") but are only ever expressed as a SPICE
+        # model override -- no dedicated xschem symbol declares the
+        # "special_" name. Fall back to the base device's symbol so the
+        # generated schematic still carries the full ("special_...")
+        # model name into the netlist, keeping LVS device classes intact.
+        if model.startswith("special_"):
+            return self._by_key.get((library, model[len("special_") :]))
+
+        return None
