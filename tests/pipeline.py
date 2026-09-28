@@ -136,11 +136,40 @@ def run_lvs(
 
     passed = bool(
         re.search(r"Circuits match uniquely", report_text)
-    ) or _is_matching_empty_circuit(report_text)
+    ) or _is_matching_empty_circuit(reference_spice, generated_netlist, report_text)
     return LvsResult(passed=passed, report_text=report_text, report_path=report_path)
 
 
-def _is_matching_empty_circuit(report_text: str) -> bool:
+def _spice_has_devices(path: Path) -> bool:
+    """Return True if a SPICE file has any device/instance lines inside a subckt."""
+    in_subckt = False
+    for raw in path.read_text().splitlines():
+        line = raw.split("*", 1)[0].strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith(".subckt"):
+            in_subckt = True
+            continue
+        if lower.startswith(".ends"):
+            in_subckt = False
+            continue
+        if in_subckt and not lower.startswith("."):
+            return True
+    return False
+
+
+def _is_matching_empty_circuit(
+    reference_spice: Path, generated_netlist: Path, report_text: str
+) -> bool:
+    """Pass only when *both* netlists are empty and pins still match.
+
+    Netgen reports empty generated cells as "Not checked" even when the
+    reference has devices, so trusting that message alone lets blank
+    schematics slip through.
+    """
+    if _spice_has_devices(reference_spice) or _spice_has_devices(generated_netlist):
+        return False
     if not re.search(r"has no elements and/or nodes\.\s*Not checked\.", report_text):
         return False
     return (

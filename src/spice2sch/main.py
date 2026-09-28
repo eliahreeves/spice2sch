@@ -13,6 +13,7 @@ import spice2sch.constants as constants
 from spice2sch.cli_def import create_parser
 from spice2sch.spice import Spice, SubcktCall
 from spice2sch.symbols import SymbolIndex
+from spice2sch.patterns import Transistor, find_super_nodes
 
 p_value = 0
 
@@ -136,6 +137,9 @@ def main() -> None:
 
         # create list of devices (FET and non-FET alike) via PDK symbol lookup
         primitives = create_primitive_objects(calls, symbol_index)
+        (super_nodes, primitives) = find_super_nodes(primitives)
+
+        sch_output += create_xschem_node_row(primitives, constants.primitive_origin)
 
         sch_output += create_xschem_primitive_row(
             primitives, constants.primitive_origin

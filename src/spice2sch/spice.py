@@ -1,5 +1,24 @@
 from typing import List, Tuple
 
+# Net names conventionally used for supply/ground rails across common PDKs.
+# Shared across I/O classification (below) and subgraph pattern matching
+# (see `patterns.py`), since a rail should never be treated as an internal
+# series/stack junction even if it coincidentally touches exactly two
+# devices within some local subset of a design.
+POWER_GROUND_NETS = {
+    "VDD",
+    "VCC",
+    "VSS",
+    "GND",
+    "VGND",
+    "VPWR",
+    "VNB",
+    "VPB",
+    "VPWRIN",
+    "LOWLVPWR",
+}
+
+
 class SubcktCall:
     name: str
     nodes: List[str]
@@ -45,14 +64,12 @@ class Spice:
 
         ports = tokens[2:]
 
-        power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB", "VPWRIN", "LOWLVPWR"}
-
         inputs: List[str] = []
         outputs: List[str] = []
         found_inputs = False
 
         for port in ports:
-            is_port_power_ground = port in power_ground
+            is_port_power_ground = port in POWER_GROUND_NETS
             if is_port_power_ground:
                 found_inputs = True
 
