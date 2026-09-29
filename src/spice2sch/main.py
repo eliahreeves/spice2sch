@@ -4,30 +4,30 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from spice2sch.models import (
-    Point,
-    Primitive,
-    Wire,
-)
+from spice2sch.models import Point, Primitive
 import spice2sch.constants as constants
 from spice2sch.cli_def import create_parser
 from spice2sch.spice import Spice, SubcktCall
 from spice2sch.symbols import SymbolIndex
-from spice2sch.patterns import Transistor, find_super_nodes
-
-p_value = 0
+from spice2sch.patterns import find_super_nodes
+from spice2sch.placeable import build_placeables, next_label_name, place_in_row
 
 
 def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
-    global p_value
     output = ""
     for index, input_pin in enumerate(pins[0]):
-        output += f"C {{ipin.sym}} {origin.x} {origin.y + index * 20} 0 0 {{name=p{p_value} lab={input_pin}}}\n"
-        p_value += 1
+        label = next_label_name()
+        output += (
+            f"C {{ipin.sym}} {origin.x} {origin.y + index * 20} 0 0 "
+            f"{{name={label} lab={input_pin}}}\n"
+        )
 
     for index, output_pin in enumerate(pins[1]):
-        output += f"C {{opin.sym}} {origin.x + 20} {origin.y + index * 20} 0 0 {{name=p{p_value} lab={output_pin}}}\n"
-        p_value += 1
+        label = next_label_name()
+        output += (
+            f"C {{opin.sym}} {origin.x + 20} {origin.y + index * 20} 0 0 "
+            f"{{name={label} lab={output_pin}}}\n"
+        )
 
     return output
 
@@ -62,52 +62,6 @@ def create_primitive_objects(
     return primitives
 
 
-def _lab_pin_orientation(pin_x: float, pin_y: float) -> Tuple[int, int]:
-    if abs(pin_x) >= abs(pin_y):
-        return (2, 0) if pin_x >= 0 else (0, 0)
-    return (3, 0) if pin_y >= 0 else (1, 0)
-
-
-def create_single_primitive(primitive: Primitive, pos: Point) -> str:
-    global p_value
-    output = ""
-
-    attr_lines = [f"name={primitive.instance_name}"]
-    for name, value in primitive.params.items():
-        canonical = primitive.symbol.normalize_param_name(name)
-        attr_lines.append(f"{canonical}={value}")
-    attr_lines.append(f"model={primitive.model}")
-    attr_lines.append("spiceprefix=X")
-
-    newline = "\n"
-    output += (
-        f"C {{{primitive.symbol.sch_path}}} {pos.x} {pos.y} 0 0 "
-        "{"
-        f"{newline.join(attr_lines)}"
-        "}\n"
-    )
-
-    for node, pin in zip(primitive.nodes, primitive.symbol.pins):
-        pin_x = int(round(pos.x + pin.x))
-        pin_y = int(round(pos.y + pin.y))
-        orient = _lab_pin_orientation(pin.x, pin.y)
-        output += (
-            f"C {{lab_pin.sym}} {pin_x} {pin_y} {orient[0]} {orient[1]} "
-            f"{{name=p{p_value} sig_type=std_logic lab={node}}}\n"
-        )
-        p_value += 1
-
-    return output
-
-
-def create_xschem_primitive_row(primitives: List[Primitive], origin: Point) -> str:
-    output = ""
-    for index, item in enumerate(primitives):
-        pos = Point(origin.x + (index * constants.spacing), origin.y)
-        output += create_single_primitive(item, pos)
-    return output
-
-
 def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
@@ -121,7 +75,6 @@ def main() -> None:
 
         sch_output = constants.file_header
 
-        # create io_pins
         io_pins = spice_file.extract_io()
         sch_output += create_io_block(io_pins, constants.io_origin)
 
@@ -134,15 +87,13 @@ def main() -> None:
             except FileNotFoundError as exc:
                 parser.error(str(exc))
 
-        # create list of devices (FET and non-FET alike) via PDK symbol lookup
         primitives = create_primitive_objects(calls, symbol_index)
-        (super_nodes, primitives) = find_super_nodes(primitives)
+        super_nodes, leftovers = find_super_nodes(primitives)
+        placeables = build_placeables(super_nodes, leftovers)
+        place_in_row(placeables, constants.primitive_origin, constants.spacing)
 
-        # sch_output += create_xschem_node_row(primitives, constants.primitive_origin)
-
-        sch_output += create_xschem_primitive_row(
-            primitives, constants.primitive_origin
-        )
+        for placeable in placeables:
+            sch_output += placeable.draw()
 
         if args.output_file:
             with open(args.output_file, "w") as outfile:

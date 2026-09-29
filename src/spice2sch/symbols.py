@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 _PIN_RE = re.compile(
@@ -43,6 +44,30 @@ class BBox:
     @property
     def size(self) -> tuple[float, float]:
         return (self.width, self.height)
+
+    @property
+    def center(self) -> tuple[float, float]:
+        return ((self.min_x + self.max_x) / 2.0, (self.min_y + self.max_y) / 2.0)
+
+    def union(self, other: BBox) -> BBox:
+        return BBox(
+            min(self.min_x, other.min_x),
+            min(self.min_y, other.min_y),
+            max(self.max_x, other.max_x),
+            max(self.max_y, other.max_y),
+        )
+
+    def map_points(self, fn: Callable[[float, float], tuple[float, float]]) -> BBox:
+        """Transform the four corners through `fn` and recompute the AABB."""
+        corners = (
+            fn(self.min_x, self.min_y),
+            fn(self.min_x, self.max_y),
+            fn(self.max_x, self.min_y),
+            fn(self.max_x, self.max_y),
+        )
+        xs = [x for x, _ in corners]
+        ys = [y for _, y in corners]
+        return BBox(min(xs), min(ys), max(xs), max(ys))
 
 
 @dataclass(frozen=True)

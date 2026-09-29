@@ -37,7 +37,7 @@ class Primitive:
     id: int
     instance_name: str
     nodes: List[str]
-    params: Mapping[str, float]
+    params: Mapping[str, str]
     library: str
     model: str
     symbol: SymbolDef

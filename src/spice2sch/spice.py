@@ -16,6 +16,7 @@ POWER_GROUND_NETS = {
     "VPB",
     "VPWRIN",
     "LOWLVPWR",
+    "KAPWR",
 }
 
 
@@ -23,7 +24,7 @@ class SubcktCall:
     name: str
     nodes: List[str]
     subckt_ref: str
-    params: List[Tuple[str, float]]
+    params: List[Tuple[str, str]]
 
     def __init__(self, call_str: str):
         tokens = call_str.split()
@@ -41,10 +42,10 @@ class SubcktCall:
 
         self.nodes = tokens[1:param_index]
         self.subckt_ref = tokens[param_index]
-        params: List[Tuple[str, float]] = []
+        params: List[Tuple[str, str]] = []
         for token in tokens[param_index + 1 :]:
             name, value = token.split("=", 1)
-            params.append((name, float(value)))
+            params.append((name, value))
         self.params = params
 
 

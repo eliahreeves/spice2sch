@@ -6,10 +6,10 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
 from spice2sch.models import Primitive
 from spice2sch.spice import POWER_GROUND_NETS
 
-_DRAIN_ALIASES = {"d", "drain"}
-_GATE_ALIASES = {"g", "gate"}
-_SOURCE_ALIASES = {"s", "source"}
-_BODY_ALIASES = {"b", "bulk", "body", "nb", "pb", "sub", "substrate", "well"}
+DRAIN_ALIASES = {"d", "drain"}
+GATE_ALIASES = {"g", "gate"}
+SOURCE_ALIASES = {"s", "source"}
+BODY_ALIASES = {"b", "bulk", "body", "nb", "pb", "sub", "substrate", "well"}
 
 
 def _pin_node_map(primitive: Primitive) -> Dict[str, str]:
@@ -43,6 +43,10 @@ class Transistor:
     def diffusion_terminals(self) -> Tuple[str, str]:
         return (self.drain, self.source)
 
+    def other_diffusion(self, net: str) -> str:
+        """The diffusion terminal on the opposite side from ``net``."""
+        return self.source if self.drain == net else self.drain
+
     @property
     def is_diode_connected(self) -> bool:
         return self.gate == self.drain or self.gate == self.source
@@ -58,13 +62,13 @@ class Transistor:
             return None
 
         pins = _pin_node_map(primitive)
-        drain = _first_match(pins, _DRAIN_ALIASES)
-        gate = _first_match(pins, _GATE_ALIASES)
-        source = _first_match(pins, _SOURCE_ALIASES)
+        drain = _first_match(pins, DRAIN_ALIASES)
+        gate = _first_match(pins, GATE_ALIASES)
+        source = _first_match(pins, SOURCE_ALIASES)
         if drain is None or gate is None or source is None:
             return None
 
-        body = _first_match(pins, _BODY_ALIASES)
+        body = _first_match(pins, BODY_ALIASES)
         return cls(
             primitive=primitive,
             drain=drain,
@@ -142,21 +146,46 @@ SuperNode = Union[
 ]
 
 
+def _is_rail(net: str) -> bool:
+    return net.upper() in POWER_GROUND_NETS
+
+
+def _inverter_output(p_item: Transistor, n_item: Transistor) -> Optional[str]:
+    """The output net if ``p_item``/``n_item`` form a CMOS inverter, else None.
+
+    Both devices must share the input gate and exactly one diffusion net (the
+    output), and each must connect its other diffusion terminal to a distinct
+    rail. Without the rail check, the top and bottom devices of NAND/NOR
+    stacks, and the halves of clocked transmission gates, look like
+    inverters.
+    """
+    if p_item.gate != n_item.gate:
+        return None
+    shared = set(p_item.diffusion_terminals) & set(n_item.diffusion_terminals)
+    if len(shared) != 1:
+        return None
+    output = next(iter(shared))
+    p_rail = p_item.other_diffusion(output)
+    n_rail = n_item.other_diffusion(output)
+    if _is_rail(output) or output == p_item.gate:
+        return None
+    if not (_is_rail(p_rail) and _is_rail(n_rail)) or p_rail == n_rail:
+        return None
+    return output
+
+
 def find_inverters(pmos: List[Transistor], nmos: List[Transistor]) -> List[Inverter]:
-    # """Find PMOS/NMOS pairs sharing a gate net (the input) and exactly one
-    # diffusion terminal (the output). Matched transistors are removed from
-    # `pmos`/`nmos` in place."""
+    """Find PMOS/NMOS pairs forming a CMOS inverter (see `_inverter_output`).
+    Matched transistors are removed from `pmos`/`nmos` in place."""
     inverters: List[Inverter] = []
     p_index = 0
     while p_index < len(pmos):
         p_item = pmos[p_index]
         match: Optional[Tuple[int, str]] = None
         for n_index, n_item in enumerate(nmos):
-            if p_item.gate != n_item.gate:
-                continue
-            shared = set(p_item.diffusion_terminals) & set(n_item.diffusion_terminals)
-            if len(shared) == 1:
-                match = (n_index, next(iter(shared)))
+            output = _inverter_output(p_item, n_item)
+            if output is not None:
+                match = (n_index, output)
                 break
         if match is None:
             p_index += 1
@@ -180,15 +209,17 @@ def find_transmission_gates(
     pmos: List[Transistor], nmos: List[Transistor]
 ) -> List[TransmissionGate]:
     """Find PMOS/NMOS pairs connected source-to-source and drain-to-drain
-    (in either order). Matched transistors are removed from `pmos`/`nmos`
-    in place."""
+    (in either order), driven by different (complementary) gate nets.
+    Matched transistors are removed from `pmos`/`nmos` in place."""
     gates: List[TransmissionGate] = []
     p_index = 0
     while p_index < len(pmos):
         p_item = pmos[p_index]
         match_index: Optional[int] = None
         for n_index, n_item in enumerate(nmos):
-            if set(p_item.diffusion_terminals) == set(n_item.diffusion_terminals):
+            if p_item.gate != n_item.gate and set(p_item.diffusion_terminals) == set(
+                n_item.diffusion_terminals
+            ):
                 match_index = n_index
                 break
         if match_index is None:
@@ -398,8 +429,10 @@ def find_super_nodes(
     super_nodes: List[SuperNode] = []
     pmos = [t for t in transistors if t.is_pmos]
     nmos = [t for t in transistors if t.is_nmos]
-    super_nodes.extend(find_inverters(pmos, nmos))
+    # TGs first: they are the stricter match (both diffusions shared), and
+    # their devices otherwise pair up with neighbors as false inverters.
     super_nodes.extend(find_transmission_gates(pmos, nmos))
+    super_nodes.extend(find_inverters(pmos, nmos))
     remaining = pmos + nmos
     leftover = other + [t.primitive for t in remaining]
     return super_nodes, leftover
