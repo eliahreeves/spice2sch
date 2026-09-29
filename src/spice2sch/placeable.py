@@ -298,24 +298,22 @@ def _pin_name(primitive: Primitive, aliases: AbstractSet[str]) -> str:
     raise KeyError(f"no pin in {sorted(aliases)} on {primitive.instance_name}")
 
 
-def _pin_name_for_net(primitive: Primitive, net: str) -> str:
-    for node, pin in zip(primitive.nodes, primitive.symbol.pins):
-        if node == net:
-            return pin.name
-    raise KeyError(f"net {net!r} not found on {primitive.instance_name}")
-
-
 _STACK_GAP = 20
+# Room for the two body-pin labels, which face each other across the gap.
+_TG_STACK_GAP = 80
 
 
 def _stack_above(
-    upper: PrimitivePlaceable, upper_pin: str, lower: PrimitivePlaceable, lower_pin: str
+    upper: Placeable,
+    upper_pin: str,
+    lower: Placeable,
+    lower_pin: str,
+    gap: float = _STACK_GAP,
 ) -> None:
-    """Pose ``upper`` just above ``lower`` (at identity) with the pins x-aligned."""
-    ux, _ = upper.local_port(upper_pin)
-    lx, _ = lower.local_port(lower_pin)
-    y = lower.local_bbox().min_y - _STACK_GAP - upper.local_bbox().max_y
-    upper.pose = Pose(_round_point(lx - ux, y))
+    """Move ``upper`` to sit ``gap`` above ``lower`` with the two pins x-aligned."""
+    dx = lower.port_position(lower_pin).x - upper.port_position(upper_pin).x
+    dy = lower.bbox.min_y - gap - upper.bbox.max_y
+    upper.move_by(dx, dy)
 
 
 def _inverter_half(transistor: Transistor, output_net: str) -> PrimitivePlaceable:
@@ -362,22 +360,46 @@ def from_inverter(inv: Inverter) -> CompositePlaceable:
     )
 
 
+def _tg_half(
+    transistor: Transistor, tg: TransmissionGate, orientation: Orientation
+) -> PrimitivePlaceable:
+    """Put ``terminal_a`` on the drain pin and ``terminal_b`` on the source pin,
+    so both devices line up the same way (LVS-safe: MOSFETs are symmetric)."""
+    primitive = transistor.primitive
+    half = PrimitivePlaceable(
+        primitive,
+        net_overrides={
+            _pin_name(primitive, DRAIN_ALIASES): tg.terminal_a,
+            _pin_name(primitive, SOURCE_ALIASES): tg.terminal_b,
+        },
+    )
+    half.pose = Pose(orientation=orientation)
+    return half
+
+
 def from_transmission_gate(tg: TransmissionGate) -> CompositePlaceable:
-    """Parallel TG: PMOS above NMOS, diffusion terminals aligned."""
-    pmos = PrimitivePlaceable(tg.pmos.primitive)
-    nmos = PrimitivePlaceable(tg.nmos.primitive)
+    """PMOS on top with its gate up, NMOS below with its gate down, and the
+    drains and sources wired straight across."""
+    # sky130 FET symbols have the gate on the left: rot=1 turns it up, rot=3 down.
+    pmos = _tg_half(tg.pmos, tg, Orientation(1, 0))
+    nmos = _tg_half(tg.nmos, tg, Orientation(3, 0))
     p_prim, n_prim = tg.pmos.primitive, tg.nmos.primitive
-    p_a = _pin_name_for_net(p_prim, tg.terminal_a)
-    _stack_above(pmos, p_a, nmos, _pin_name_for_net(n_prim, tg.terminal_a))
+    p_drain, n_drain = _pin_name(p_prim, DRAIN_ALIASES), _pin_name(n_prim, DRAIN_ALIASES)
+    p_source, n_source = _pin_name(p_prim, SOURCE_ALIASES), _pin_name(n_prim, SOURCE_ALIASES)
+    _stack_above(pmos, p_drain, nmos, n_drain, gap=_TG_STACK_GAP)
 
     return CompositePlaceable(
         children={"pmos": pmos, "nmos": nmos},
         ports={
-            "a": ("pmos", p_a),
-            "b": ("pmos", _pin_name_for_net(p_prim, tg.terminal_b)),
+            "a": ("pmos", p_drain),
+            "b": ("pmos", p_source),
             "en": ("nmos", _pin_name(n_prim, GATE_ALIASES)),
             "enb": ("pmos", _pin_name(p_prim, GATE_ALIASES)),
         },
+        wires=(
+            InternalWire(tg.terminal_a, ("pmos", p_drain), ("nmos", n_drain)),
+            InternalWire(tg.terminal_b, ("pmos", p_source), ("nmos", n_source)),
+        ),
     )
 
 

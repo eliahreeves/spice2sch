@@ -253,6 +253,35 @@ def test_from_transmission_gate_ports():
     assert placeable.port_position("a") == Point(50, 50)
 
 
+def test_from_transmission_gate_layout():
+    # NMOS listed with A/B on source/drain reversed relative to the PMOS.
+    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"])
+    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["B", "EN", "A", "VNB"], index=1)
+    tg = TransmissionGate(
+        pmos=_transistor(p_prim, is_pmos=True),
+        nmos=_transistor(n_prim, is_pmos=False),
+        terminal_a="A",
+        terminal_b="B",
+    )
+    placeable = from_transmission_gate(tg)
+    pmos = placeable.children["pmos"]
+    nmos = placeable.children["nmos"]
+
+    assert pmos.bbox.max_y < nmos.bbox.min_y
+    enb, en = pmos.port_position("G"), nmos.port_position("G")
+    assert enb.x == pmos.center.x and enb.y < pmos.center.y  # gate points up
+    assert en.x == nmos.center.x and en.y > nmos.center.y  # gate points down
+
+    for pin, net in (("D", "A"), ("S", "B")):
+        assert pmos.nets[pin] == net and nmos.nets[pin] == net
+        assert pmos.port_position(pin).x == nmos.port_position(pin).x
+
+    text = placeable.draw()
+    assert "{lab=A}" in text and "{lab=B}" in text
+    assert text.count("sig_type=std_logic lab=A") == 1
+    assert text.count("sig_type=std_logic lab=B") == 1
+
+
 def test_place_in_row_uses_bbox_width():
     wide = _symbol(bbox=BBox(-40.0, -10.0, 40.0, 10.0))
     narrow = _symbol(stem="r", device_type="res", bbox=BBox(-10.0, -5.0, 10.0, 5.0))
