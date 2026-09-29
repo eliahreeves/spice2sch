@@ -224,9 +224,10 @@ class PrimitivePlaceable(Placeable):
 
 @dataclass(frozen=True)
 class InternalWire:
-    """A wire between two child ports, drawn instead of a lab_pin on each.
+    """A connection between two child ports, drawn instead of a lab_pin on each.
 
     Endpoints are ``(child_key, pin_name)``; the net label goes on ``a``.
+    When the endpoints already coincide, only the label is drawn.
     """
 
     net: str
@@ -285,7 +286,8 @@ class CompositePlaceable(Placeable):
         for wire in self.wires:
             start = _round_point(*pose.apply(*self._child_port(wire.a)))
             end = _round_point(*pose.apply(*self._child_port(wire.b)))
-            output += Wire(start.x, start.y, end.x, end.y, wire.net).to_xschem()
+            if start != end:
+                output += Wire(start.x, start.y, end.x, end.y, wire.net).to_xschem()
             child = self.children[wire.a[0]]
             output += _lab_pin(pose.compose(child.pose), child.pin(wire.a[1]), wire.net)
         return output
@@ -334,7 +336,10 @@ def _inverter_half(transistor: Transistor, output_net: str) -> PrimitivePlaceabl
 
 
 def from_inverter(inv: Inverter) -> CompositePlaceable:
-    """CMOS stack: PMOS above NMOS, gates aligned, drains wired together."""
+    """CMOS stack: PMOS above NMOS, output drains on the same point.
+
+    The drains touch, so the output net needs no wire. Only the gates are wired.
+    """
     pmos = _inverter_half(inv.pmos, inv.output_node)
     nmos = _inverter_half(inv.nmos, inv.output_node)
     p_prim, n_prim = inv.pmos.primitive, inv.nmos.primitive
@@ -343,7 +348,7 @@ def from_inverter(inv: Inverter) -> CompositePlaceable:
         _pin_name(p_prim, DRAIN_ALIASES),
         _pin_name(n_prim, DRAIN_ALIASES),
     )
-    _stack_above(pmos, p_gate, nmos, n_gate)
+    pmos.place_port(p_drain, nmos.port_position(n_drain))
 
     return CompositePlaceable(
         children={"pmos": pmos, "nmos": nmos},

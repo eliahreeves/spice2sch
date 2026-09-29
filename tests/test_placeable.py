@@ -193,14 +193,15 @@ def test_composite_rotation_carries_children():
     assert "C {testlib/pfet.sym} 50 0 1 0" in composite.draw()
 
 
-def test_from_inverter_draws_wires_for_shared_nets():
+def test_from_inverter_wires_only_the_gates():
     placeable = from_inverter(_inverter())
     placeable.place_center(Point(0, 0))
     text = placeable.draw()
     assert text.count("sig_type=std_logic lab=A") == 1
     assert text.count("sig_type=std_logic lab=Y") == 1
     assert "{lab=A}" in text
-    assert "{lab=Y}" in text
+    assert "{lab=Y}" not in text
+    assert text.count("\nN ") == 1
     assert text.count("sig_type=std_logic lab=VPWR") == 2
     assert text.count("sig_type=std_logic lab=VGND") == 2
 
@@ -210,7 +211,8 @@ def test_from_inverter_draws_wires_for_shared_nets():
     assert pmos.nets["D"] == "Y"
     assert nmos.nets["S"] == "VGND"
     assert nmos.nets["D"] == "Y"
-    assert pmos.port_position("D").x == nmos.port_position("D").x
+    assert pmos.port_position("D") == nmos.port_position("D")
+    assert pmos.port_position("G").x == nmos.port_position("G").x
 
 
 def test_from_inverter_only_skips_wired_pins():
@@ -233,7 +235,10 @@ def test_from_inverter_stacks_pmos_above_nmos():
 
     pmos = placeable.children["pmos"]
     nmos = placeable.children["nmos"]
+    shared = pmos.port_position("D")
+    assert shared == nmos.port_position("D")
     assert pmos.bbox.max_y <= nmos.bbox.min_y
+    assert pmos.port_position("S").y < shared.y < nmos.port_position("S").y
     assert pmos.port_position("G").x == nmos.port_position("G").x
 
 
