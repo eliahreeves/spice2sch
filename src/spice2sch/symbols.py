@@ -8,9 +8,41 @@ from pathlib import Path
 _PIN_RE = re.compile(
     r"^B 5 (?P<x1>[-\d.]+) (?P<y1>[-\d.]+) (?P<x2>[-\d.]+) (?P<y2>[-\d.]+) \{(?P<attrs>.*)\}"
 )
+_LINE_RE = re.compile(
+    r"^L \d+ (?P<x1>[-\d.]+) (?P<y1>[-\d.]+) (?P<x2>[-\d.]+) (?P<y2>[-\d.]+)"
+)
+_BOX_RE = re.compile(
+    r"^B \d+ (?P<x1>[-\d.]+) (?P<y1>[-\d.]+) (?P<x2>[-\d.]+) (?P<y2>[-\d.]+)"
+)
+_POLY_RE = re.compile(r"^P \d+ (?P<n>\d+) (?P<coords>[^{]+)")
+_ARC_RE = re.compile(
+    r"^A \d+ (?P<cx>[-\d.]+) (?P<cy>[-\d.]+) (?P<r>[-\d.]+)"
+)
 _ATTR_RE = re.compile(r"(\w+)=([^\s}]+)")
 _TYPE_RE = re.compile(r"\btype=(\S+)")
 _TEMPLATE_MODEL_RE = re.compile(r"\bmodel=(\S+)")
+
+
+@dataclass(frozen=True)
+class BBox:
+    """Axis-aligned bounds of an xschem symbol's drawing geometry."""
+
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+
+    @property
+    def width(self) -> float:
+        return self.max_x - self.min_x
+
+    @property
+    def height(self) -> float:
+        return self.max_y - self.min_y
+
+    @property
+    def size(self) -> tuple[float, float]:
+        return (self.width, self.height)
 
 
 @dataclass(frozen=True)
@@ -28,6 +60,7 @@ class SymbolDef:
     library: str
     stem: str
     pins: tuple[SymbolPin, ...]
+    bbox: BBox
     device_type: str | None
     template_model: str | None
     template_attr_names: dict[str, str]
@@ -76,6 +109,43 @@ def _parse_pins(text: str) -> tuple[SymbolPin, ...]:
     return tuple(pins)
 
 
+def _parse_bbox(text: str) -> BBox:
+    """Compute symbol bounds from lines, boxes, polygons, and arcs.
+
+    Text labels are ignored so name/model annotations do not inflate size.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    for line in text.splitlines():
+        s = line.strip()
+        if match := _LINE_RE.match(s):
+            xs.extend([float(match.group("x1")), float(match.group("x2"))])
+            ys.extend([float(match.group("y1")), float(match.group("y2"))])
+        elif match := _BOX_RE.match(s):
+            xs.extend([float(match.group("x1")), float(match.group("x2"))])
+            ys.extend([float(match.group("y1")), float(match.group("y2"))])
+        elif match := _POLY_RE.match(s):
+            n = int(match.group("n"))
+            coords = match.group("coords").split()
+            for i in range(0, min(2 * n, len(coords)), 2):
+                xs.append(float(coords[i]))
+                ys.append(float(coords[i + 1]))
+        elif match := _ARC_RE.match(s):
+            cx, cy, r = (
+                float(match.group("cx")),
+                float(match.group("cy")),
+                abs(float(match.group("r"))),
+            )
+            xs.extend([cx - r, cx + r])
+            ys.extend([cy - r, cy + r])
+
+    if not xs:
+        return BBox(0.0, 0.0, 0.0, 0.0)
+
+    return BBox(min(xs), min(ys), max(xs), max(ys))
+
+
 def _parse_symbol(path: Path) -> SymbolDef:
     text = path.read_text(errors="ignore")
     library = path.parent.name
@@ -97,6 +167,7 @@ def _parse_symbol(path: Path) -> SymbolDef:
         library=library,
         stem=path.stem,
         pins=_parse_pins(text),
+        bbox=_parse_bbox(text),
         device_type=device_type_match.group(1) if device_type_match else None,
         template_model=template_model,
         template_attr_names=template_attrs,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from spice2sch.symbols import SymbolIndex
+from spice2sch.symbols import SymbolIndex, _parse_bbox, _parse_symbol
 
 
 def _write_symbol(
@@ -17,6 +17,7 @@ def _write_symbol(
         "K {type=%s\n"
         'template="name=X1 model=%s__%s VALUE=1%s"\n'
         "}\n"
+        "L 4 -15 0 15 0 {}\n"
         "B 5 -20 -10 -20 10 {name=A pinnumber=1}\n"
         "B 5 20 -10 20 10 {name=B pinnumber=2}\n"
         % (stem_model, library, stem_model, extra_params)
@@ -78,3 +79,30 @@ def test_missing_pdk_root_raises(tmp_path: Path):
     empty_root.mkdir()
     with pytest.raises(FileNotFoundError):
         SymbolIndex(empty_root)
+
+
+def test_parse_bbox_from_geometry(tmp_path: Path):
+    path = tmp_path / "lib" / "dev.sym"
+    _write_symbol(path, library="lib", stem_model="dev")
+    symbol = _parse_symbol(path)
+
+    # pins at x=±20, y=±10 plus a line from (-15,0) to (15,0)
+    assert symbol.bbox.min_x == -20.0
+    assert symbol.bbox.max_x == 20.0
+    assert symbol.bbox.min_y == -10.0
+    assert symbol.bbox.max_y == 10.0
+    assert symbol.bbox.size == (40.0, 20.0)
+
+
+def test_parse_bbox_includes_arcs_and_polys():
+    text = (
+        "L 4 0 0 10 0 {}\n"
+        "P 4 3 0 0 5 5 10 0 {}\n"
+        "A 4 0 0 4 0 90 {}\n"
+        "T {@name} 100 100 0 0 0.2 0.2 {}\n"  # text must not inflate bbox
+    )
+    bbox = _parse_bbox(text)
+    assert bbox.min_x == -4.0
+    assert bbox.max_x == 10.0
+    assert bbox.min_y == -4.0
+    assert bbox.max_y == 5.0

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Mapping
 
 from spice2sch.spice import SubcktCall
 from spice2sch.symbols import SymbolDef
@@ -37,10 +37,16 @@ class Primitive:
     id: int
     instance_name: str
     nodes: List[str]
-    params: List[str]
+    params: Mapping[str, float]
     library: str
     model: str
     symbol: SymbolDef
+
+    @property
+    def size(self) -> Point:
+        """Width/height of the resolved symbol, from its drawing bounding box."""
+        width, height = self.symbol.bbox.size
+        return Point(int(round(width)), int(round(height)))
 
     @classmethod
     def from_subckt_call(
@@ -63,7 +69,7 @@ class Primitive:
             id=index,
             instance_name=instance_name,
             nodes=list(subckt_call.nodes),
-            params=list(subckt_call.params),
+            params=dict(subckt_call.params),
             library=library,
             model=model,
             symbol=symbol,

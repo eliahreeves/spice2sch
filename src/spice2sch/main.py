@@ -73,8 +73,7 @@ def create_single_primitive(primitive: Primitive, pos: Point) -> str:
     output = ""
 
     attr_lines = [f"name={primitive.instance_name}"]
-    for param in primitive.params:
-        name, value = param.split("=", 1)
+    for name, value in primitive.params.items():
         canonical = primitive.symbol.normalize_param_name(name)
         attr_lines.append(f"{canonical}={value}")
     attr_lines.append(f"model={primitive.model}")
@@ -139,7 +138,7 @@ def main() -> None:
         primitives = create_primitive_objects(calls, symbol_index)
         (super_nodes, primitives) = find_super_nodes(primitives)
 
-        sch_output += create_xschem_node_row(primitives, constants.primitive_origin)
+        # sch_output += create_xschem_node_row(primitives, constants.primitive_origin)
 
         sch_output += create_xschem_primitive_row(
             primitives, constants.primitive_origin
