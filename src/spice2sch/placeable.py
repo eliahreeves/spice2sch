@@ -22,10 +22,13 @@ from spice2sch.patterns import (
     GATE_ALIASES,
     SOURCE_ALIASES,
     Inverter,
+    ParallelChain,
+    SeriesChain,
     SuperNode,
     Transistor,
     TransmissionGate,
 )
+from spice2sch.spice import GROUND_NETS, POWER_NETS
 from spice2sch.symbols import BBox, SymbolPin
 
 
@@ -224,15 +227,20 @@ class PrimitivePlaceable(Placeable):
 
 @dataclass(frozen=True)
 class InternalWire:
-    """A connection between two child ports, drawn instead of a lab_pin on each.
+    """A connection between child ports, drawn instead of a lab_pin on each.
 
-    Endpoints are ``(child_key, pin_name)``; the net label goes on ``a``.
-    When the endpoints already coincide, only the label is drawn.
+    Endpoints are ``(child_key, pin_name)``. ``more`` continues the chain past
+    ``b`` (a parallel tie of three or more devices). The net label goes on
+    ``a``. A segment whose ends already coincide is omitted, leaving the label.
     """
 
     net: str
     a: Tuple[str, str]
     b: Tuple[str, str]
+    more: Tuple[Tuple[str, str], ...] = ()
+
+    def endpoints(self) -> Tuple[Tuple[str, str], ...]:
+        return (self.a, self.b, *self.more)
 
 
 class CompositePlaceable(Placeable):
@@ -272,25 +280,68 @@ class CompositePlaceable(Placeable):
     def local_bbox(self) -> BBox:
         return reduce(BBox.union, (child.bbox for child in self.children.values()))
 
+    def _wire_points(self, wire: InternalWire) -> List[Point]:
+        return [
+            _round_point(*self._child_port(endpoint)) for endpoint in wire.endpoints()
+        ]
+
+    def _drawable_wires(self) -> List[InternalWire]:
+        """Wires that touch no pin on another net.
+
+        xschem joins any pin lying on a wire, not just the wire's ends, so a
+        straight run across a foreign pin (e.g. a gate tie crossing a body pin)
+        would short two nets. Such wires are left to net labels instead.
+        """
+        pins = [
+            (_round_point(*child.pose.apply(pin.x, pin.y)), child.nets[pin.name])
+            for child in self.children.values()
+            for pin in child.primitive.symbol.pins
+        ]
+        drawable: List[InternalWire] = []
+        for wire in self.wires:
+            points = self._wire_points(wire)
+            if not any(
+                net != wire.net and _on_segment(point, start, end)
+                for start, end in zip(points, points[1:])
+                for point, net in pins
+            ):
+                drawable.append(wire)
+        return drawable
+
     def draw(self, parent: Pose = _IDENTITY) -> str:
         pose = parent.compose(self.pose)
+        wires = self._drawable_wires()
 
         wired: Dict[str, Set[str]] = {key: set() for key in self.children}
-        for wire in self.wires:
-            for key, port in (wire.a, wire.b):
+        for wire in wires:
+            for key, port in wire.endpoints():
                 wired[key].add(self.children[key].pin(port).name)
 
         output = "".join(
             child.draw(pose, wired[key]) for key, child in self.children.items()
         )
-        for wire in self.wires:
-            start = _round_point(*pose.apply(*self._child_port(wire.a)))
-            end = _round_point(*pose.apply(*self._child_port(wire.b)))
-            if start != end:
-                output += Wire(start.x, start.y, end.x, end.y, wire.net).to_xschem()
+        for wire in wires:
+            points = [
+                _round_point(*pose.apply(point.x, point.y))
+                for point in self._wire_points(wire)
+            ]
+            for start, end in zip(points, points[1:]):
+                if start != end:
+                    output += Wire(start.x, start.y, end.x, end.y, wire.net).to_xschem()
             child = self.children[wire.a[0]]
             output += _lab_pin(pose.compose(child.pose), child.pin(wire.a[1]), wire.net)
         return output
+
+
+def _on_segment(point: Point, start: Point, end: Point) -> bool:
+    cross = (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (
+        point.x - start.x
+    )
+    if cross != 0:
+        return False
+    return min(start.x, end.x) <= point.x <= max(start.x, end.x) and min(
+        start.y, end.y
+    ) <= point.y <= max(start.y, end.y)
 
 
 def _pin_name(primitive: Primitive, aliases: AbstractSet[str]) -> str:
@@ -303,6 +354,8 @@ def _pin_name(primitive: Primitive, aliases: AbstractSet[str]) -> str:
 _STACK_GAP = 20
 # Room for the two body-pin labels, which face each other across the gap.
 _TG_STACK_GAP = 80
+# Room for body-pin labels between side-by-side parallel devices.
+_PARALLEL_GAP = 60
 
 
 def _stack_above(
@@ -330,7 +383,9 @@ def _inverter_half(transistor: Transistor, output_net: str) -> PrimitivePlaceabl
         primitive,
         net_overrides={
             _pin_name(primitive, DRAIN_ALIASES): output_net,
-            _pin_name(primitive, SOURCE_ALIASES): transistor.other_diffusion(output_net),
+            _pin_name(primitive, SOURCE_ALIASES): transistor.other_diffusion(
+                output_net
+            ),
         },
     )
 
@@ -338,12 +393,12 @@ def _inverter_half(transistor: Transistor, output_net: str) -> PrimitivePlaceabl
 def from_inverter(inv: Inverter) -> CompositePlaceable:
     """CMOS stack: PMOS above NMOS, output drains on the same point.
 
-    The drains touch, so the output net needs no wire. Only the gates are wired.
+    The drains touch, so the output net needs no wire. Gates are labeled.
     """
     pmos = _inverter_half(inv.pmos, inv.output_node)
     nmos = _inverter_half(inv.nmos, inv.output_node)
     p_prim, n_prim = inv.pmos.primitive, inv.nmos.primitive
-    p_gate, n_gate = _pin_name(p_prim, GATE_ALIASES), _pin_name(n_prim, GATE_ALIASES)
+    p_gate = _pin_name(p_prim, GATE_ALIASES)
     p_drain, n_drain = (
         _pin_name(p_prim, DRAIN_ALIASES),
         _pin_name(n_prim, DRAIN_ALIASES),
@@ -358,10 +413,7 @@ def from_inverter(inv: Inverter) -> CompositePlaceable:
             "vdd": ("pmos", _pin_name(p_prim, SOURCE_ALIASES)),
             "vss": ("nmos", _pin_name(n_prim, SOURCE_ALIASES)),
         },
-        wires=(
-            InternalWire(inv.input_node, ("pmos", p_gate), ("nmos", n_gate)),
-            InternalWire(inv.output_node, ("pmos", p_drain), ("nmos", n_drain)),
-        ),
+        wires=(InternalWire(inv.output_node, ("pmos", p_drain), ("nmos", n_drain)),),
     )
 
 
@@ -389,8 +441,14 @@ def from_transmission_gate(tg: TransmissionGate) -> CompositePlaceable:
     pmos = _tg_half(tg.pmos, tg, Orientation(1, 0))
     nmos = _tg_half(tg.nmos, tg, Orientation(3, 0))
     p_prim, n_prim = tg.pmos.primitive, tg.nmos.primitive
-    p_drain, n_drain = _pin_name(p_prim, DRAIN_ALIASES), _pin_name(n_prim, DRAIN_ALIASES)
-    p_source, n_source = _pin_name(p_prim, SOURCE_ALIASES), _pin_name(n_prim, SOURCE_ALIASES)
+    p_drain, n_drain = (
+        _pin_name(p_prim, DRAIN_ALIASES),
+        _pin_name(n_prim, DRAIN_ALIASES),
+    )
+    p_source, n_source = (
+        _pin_name(p_prim, SOURCE_ALIASES),
+        _pin_name(n_prim, SOURCE_ALIASES),
+    )
     _stack_above(pmos, p_drain, nmos, n_drain, gap=_TG_STACK_GAP)
 
     return CompositePlaceable(
@@ -408,11 +466,187 @@ def from_transmission_gate(tg: TransmissionGate) -> CompositePlaceable:
     )
 
 
+def _prefers_top(net: str) -> int:
+    """Higher means the net should sit at the top of a drawn chain."""
+    upper = net.upper()
+    if upper in POWER_NETS:
+        return 2
+    if upper in GROUND_NETS:
+        return 0
+    return 1
+
+
+def _top_sort_key(net: str) -> Tuple[int, str]:
+    return (-_prefers_top(net), net)
+
+
+def _must_share(left: Transistor, right: Transistor) -> str:
+    shared = set(left.diffusion_terminals) & set(right.diffusion_terminals)
+    if len(shared) != 1:
+        raise ValueError(
+            f"{left.primitive.instance_name} and {right.primitive.instance_name} "
+            "do not share exactly one diffusion net"
+        )
+    return next(iter(shared))
+
+
+def _free_end(transistor: Transistor, neighbor: Transistor) -> str:
+    return transistor.other_diffusion(_must_share(transistor, neighbor))
+
+
+def _ordered_top_to_bottom(transistors: Sequence[Transistor]) -> List[Transistor]:
+    """Flip a series chain so the supply-side end is first (drawn on top)."""
+    devices = list(transistors)
+    top_net = _free_end(devices[0], devices[1])
+    bottom_net = _free_end(devices[-1], devices[-2])
+    if _top_sort_key(bottom_net) < _top_sort_key(top_net):
+        devices.reverse()
+    return devices
+
+
+def _diffusion_pins_by_height(primitive: Primitive) -> Tuple[str, str]:
+    """``(upper, lower)`` diffusion pin names. Smaller local y is above."""
+    drain_name = _pin_name(primitive, DRAIN_ALIASES)
+    source_name = _pin_name(primitive, SOURCE_ALIASES)
+    drain_y = next(pin.y for pin in primitive.symbol.pins if pin.name == drain_name)
+    source_y = next(pin.y for pin in primitive.symbol.pins if pin.name == source_name)
+    if drain_y <= source_y:
+        return drain_name, source_name
+    return source_name, drain_name
+
+
+def _with_diffusion_nets(
+    transistor: Transistor, upper_net: str, lower_net: str
+) -> Tuple[PrimitivePlaceable, str, str]:
+    """Put ``upper_net`` on the pin drawn above ``lower_net``.
+
+    Swapping drain and source is LVS-safe because MOSFETs are symmetric.
+    """
+    primitive = transistor.primitive
+    upper_pin, lower_pin = _diffusion_pins_by_height(primitive)
+    placeable = PrimitivePlaceable(
+        primitive,
+        net_overrides={upper_pin: upper_net, lower_pin: lower_net},
+    )
+    return placeable, upper_pin, lower_pin
+
+
+def _place_right_of(
+    left: Placeable,
+    left_pin: str,
+    right: Placeable,
+    right_pin: str,
+    gap: float,
+) -> None:
+    """Move ``right`` to sit ``gap`` past ``left``, with the two pins y-aligned."""
+    dy = left.port_position(left_pin).y - right.port_position(right_pin).y
+    dx = left.bbox.max_x + gap - right.bbox.min_x
+    right.move_by(dx, dy)
+
+
+def _tie_same_nets(pins: Sequence[Tuple[str, str, str]]) -> List[InternalWire]:
+    """Wire pins that share a net. ``pins`` is ``(child_key, pin_name, net)``."""
+    grouped: Dict[str, List[Tuple[str, str]]] = {}
+    for key, pin, net in pins:
+        grouped.setdefault(net, []).append((key, pin))
+    wires: List[InternalWire] = []
+    for net, endpoints in grouped.items():
+        if len(endpoints) < 2:
+            continue
+        first, second, *rest = endpoints
+        wires.append(InternalWire(net, first, second, tuple(rest)))
+    return wires
+
+
+def _layout_chain(
+    specs: Sequence[Tuple[Transistor, str, str]], *, vertical: bool
+) -> CompositePlaceable:
+    """Place devices that each have an upper and a lower diffusion net.
+
+    Vertical chains are butted pin to pin. Horizontal chains sit side by side
+    with a gap. Diffusion pins that land on the same net are tied. Gates are
+    labeled.
+    """
+    children: Dict[str, PrimitivePlaceable] = {}
+    ports: Dict[str, Tuple[str, str]] = {}
+    diffusion_pins: List[Tuple[str, str, str]] = []
+    previous: Optional[Tuple[PrimitivePlaceable, str]] = None
+
+    for index, (transistor, upper_net, lower_net) in enumerate(specs):
+        placeable, upper_pin, lower_pin = _with_diffusion_nets(
+            transistor, upper_net, lower_net
+        )
+        key = f"t{index}"
+        if previous is not None:
+            previous_device, previous_pin = previous
+            if vertical:
+                placeable.place_port(
+                    upper_pin, previous_device.port_position(previous_pin)
+                )
+            else:
+                _place_right_of(
+                    previous_device, previous_pin, placeable, upper_pin, _PARALLEL_GAP
+                )
+        children[key] = placeable
+        gate_pin = _pin_name(transistor.primitive, GATE_ALIASES)
+        diffusion_pins.append((key, upper_pin, upper_net))
+        diffusion_pins.append((key, lower_pin, lower_net))
+        ports[f"g{index}"] = (key, gate_pin)
+        if index == 0:
+            ports["top"] = (key, upper_pin)
+        ports["bot"] = (key, lower_pin)
+        previous = (placeable, lower_pin if vertical else upper_pin)
+
+    return CompositePlaceable(
+        children=children,
+        ports=ports,
+        wires=tuple(_tie_same_nets(diffusion_pins)),
+    )
+
+
+def from_series_chain(chain: SeriesChain) -> CompositePlaceable:
+    """Stack the chain vertically with power on top and ground on the bottom.
+
+    Internal diffusion nets are butted, so each junction is a single label.
+    """
+    ordered = _ordered_top_to_bottom(chain.transistors)
+    specs: List[Tuple[Transistor, str, str]] = []
+    last = len(ordered) - 1
+    for index, transistor in enumerate(ordered):
+        if index == 0:
+            upper_net = _free_end(ordered[0], ordered[1])
+        else:
+            upper_net = _must_share(ordered[index - 1], transistor)
+        if index == last:
+            lower_net = _free_end(ordered[-1], ordered[-2])
+        else:
+            lower_net = _must_share(transistor, ordered[index + 1])
+        specs.append((transistor, upper_net, lower_net))
+    return _layout_chain(specs, vertical=True)
+
+
+def from_parallel_chain(chain: ParallelChain) -> CompositePlaceable:
+    """Place the chain left to right with both diffusion nets tied across.
+
+    Power is drawn on the upper pins and ground on the lower pins.
+    """
+    terminals = list(chain.transistors[0].diffusion_terminals)
+    top_net = min(terminals, key=_top_sort_key)
+    bottom_net = next(net for net in terminals if net != top_net)
+    specs = [(transistor, top_net, bottom_net) for transistor in chain.transistors]
+    return _layout_chain(specs, vertical=False)
+
+
 def from_super_node(node: SuperNode) -> CompositePlaceable:
     if isinstance(node, Inverter):
         return from_inverter(node)
     if isinstance(node, TransmissionGate):
         return from_transmission_gate(node)
+    if isinstance(node, SeriesChain):
+        return from_series_chain(node)
+    if isinstance(node, ParallelChain):
+        return from_parallel_chain(node)
+    raise TypeError(f"unsupported supernode {type(node).__name__}")
 
 
 def build_placeables(

@@ -1,23 +1,28 @@
 from typing import List, Tuple
 
-# Net names conventionally used for supply/ground rails across common PDKs.
-# Shared across I/O classification (below) and subgraph pattern matching
-# (see `patterns.py`), since a rail should never be treated as an internal
-# series/stack junction even if it coincidentally touches exactly two
-# devices within some local subset of a design.
-POWER_GROUND_NETS = {
+# Supply nets, drawn at the top of a CMOS stack. Shared with I/O
+# classification below and with chain placement in `placeable.py`.
+POWER_NETS = {
     "VDD",
     "VCC",
-    "VSS",
-    "GND",
-    "VGND",
     "VPWR",
-    "VNB",
-    "VPB",
     "VPWRIN",
     "LOWLVPWR",
     "KAPWR",
+    "VPB",
 }
+
+# Ground nets, drawn at the bottom of a CMOS stack.
+GROUND_NETS = {
+    "VSS",
+    "GND",
+    "VGND",
+    "VNB",
+}
+
+# Rails are never internal series junctions, even when some local subset of
+# a design happens to touch one with exactly two diffusion terminals.
+POWER_GROUND_NETS = POWER_NETS | GROUND_NETS
 
 
 class SubcktCall:

@@ -88,7 +88,8 @@ def main() -> None:
                 parser.error(str(exc))
 
         primitives = create_primitive_objects(calls, symbol_index)
-        super_nodes, leftovers = find_super_nodes(primitives)
+        external_nets = set(io_pins[0]) | set(io_pins[1])
+        super_nodes, leftovers = find_super_nodes(primitives, external_nets)
         placeables = build_placeables(super_nodes, leftovers)
         place_in_row(placeables, constants.primitive_origin, constants.spacing)
 

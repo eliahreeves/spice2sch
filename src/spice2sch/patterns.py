@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from spice2sch.models import Primitive
 from spice2sch.spice import POWER_GROUND_NETS
@@ -103,19 +103,43 @@ class TransmissionGate:
         return [self.pmos.primitive, self.nmos.primitive]
 
 
-#
-#
-# @dataclass(frozen=True)
-# class SeriesStack:
-#     """Same-type transistors chained diffusion-to-diffusion, ordered so that
-#     consecutive entries share a terminal (i.e. in physical stack order)."""
-#
-#     transistors: List[Transistor]
-#     is_pmos: bool
-#
-#     @property
-#     def primitives(self) -> List[Primitive]:
-#         return [t.primitive for t in self.transistors]
+@dataclass(frozen=True)
+class SeriesChain:
+    """Same-type transistors chained diffusion-to-diffusion.
+
+    ``transistors`` is ordered so consecutive devices share a terminal. The
+    first device is the end whose free net is lexicographically smaller;
+    placement may flip the chain so a supply rail sits on the outside.
+    """
+
+    transistors: Tuple[Transistor, ...]
+    is_pmos: bool
+
+    @property
+    def primitives(self) -> List[Primitive]:
+        return [t.primitive for t in self.transistors]
+
+
+@dataclass(frozen=True)
+class ParallelChain:
+    """Same-type transistors that share both diffusion terminals.
+
+    NAND pull-ups, NOR pull-downs, and multi-finger devices. Ordered by gate
+    net, then instance name.
+    """
+
+    transistors: Tuple[Transistor, ...]
+    is_pmos: bool
+
+    @property
+    def terminals(self) -> frozenset[str]:
+        return frozenset(self.transistors[0].diffusion_terminals)
+
+    @property
+    def primitives(self) -> List[Primitive]:
+        return [t.primitive for t in self.transistors]
+
+
 #
 #
 # @dataclass(frozen=True)
@@ -142,7 +166,10 @@ class TransmissionGate:
 
 SuperNode = Union[
     Inverter,
-    TransmissionGate,  # SeriesStack, CurrentMirror, DifferentialPair
+    TransmissionGate,
+    SeriesChain,
+    ParallelChain,
+    # CurrentMirror, DifferentialPair
 ]
 
 
@@ -313,110 +340,188 @@ def find_transmission_gates(
 #     return pairs
 #
 #
-# def find_series_stacks(transistors: List[Transistor]) -> List[SeriesStack]:
-#     """Find same-type transistors chained diffusion-to-diffusion into a
-#     simple linear chain (common in NAND/NOR pull-up/pull-down stacks).
-#     Matched transistors are removed from `transistors` in place."""
-#     stacks: List[SeriesStack] = []
-#
-#     for is_pmos in (True, False):
-#         group = [t for t in transistors if t.is_pmos == is_pmos]
-#         if len(group) < 2:
-#             continue
-#
-#         # A net is a genuine series junction only if exactly two
-#         # diffusion terminals (within this same-type group) land on it;
-#         # anything else is a fan-out shared by more than two transistors
-#         # and doesn't imply a simple stack. Supply/ground rails are always
-#         # excluded from candidacy even if they land on exactly two
-#         # terminals here -- within the small local subset of transistors
-#         # left ungrouped at this point, a rail can coincidentally look
-#         # like a two-terminal junction while actually being an external
-#         # connection shared by unrelated branches (e.g. two independent
-#         # pull-up branches that both happen to tie to VPWR).
-#         net_counts: Dict[str, int] = {}
-#         for t in group:
-#             net_counts[t.drain] = net_counts.get(t.drain, 0) + 1
-#             net_counts[t.source] = net_counts.get(t.source, 0) + 1
-#
-#         net_to_indices: Dict[str, List[int]] = {}
-#         for index, t in enumerate(group):
-#             for net in (t.drain, t.source):
-#                 if net.upper() in POWER_GROUND_NETS:
-#                     continue
-#                 if net_counts[net] == 2:
-#                     net_to_indices.setdefault(net, []).append(index)
-#
-#         adjacency: Dict[int, List[int]] = {index: [] for index in range(len(group))}
-#         for indices in net_to_indices.values():
-#             if len(indices) != 2:
-#                 continue
-#             a, b = indices
-#             if a == b:
-#                 continue
-#             adjacency[a].append(b)
-#             adjacency[b].append(a)
-#
-#         visited = [False] * len(group)
-#         for start in range(len(group)):
-#             if visited[start] or not adjacency[start]:
-#                 continue
-#
-#             component: List[int] = []
-#             frontier = [start]
-#             seen = {start}
-#             while frontier:
-#                 node = frontier.pop()
-#                 component.append(node)
-#                 for neighbor in adjacency[node]:
-#                     if neighbor not in seen:
-#                         seen.add(neighbor)
-#                         frontier.append(neighbor)
-#             for node in component:
-#                 visited[node] = True
-#
-#             if len(component) < 2:
-#                 continue
-#
-#             degrees = {node: len(adjacency[node]) for node in component}
-#             if any(degree > 2 for degree in degrees.values()):
-#                 continue  # branching junction: not a simple stack
-#
-#             edge_count = sum(degrees.values()) // 2
-#             if edge_count != len(component) - 1:
-#                 continue  # cycle: shouldn't happen for FETs, skip defensively
-#
-#             endpoints = [node for node in component if degrees[node] == 1]
-#             if len(endpoints) != 2:
-#                 continue
-#
-#             ordered = [endpoints[0]]
-#             previous: Optional[int] = None
-#             current = endpoints[0]
-#             while len(ordered) < len(component):
-#                 next_node = next(
-#                     neighbor for neighbor in adjacency[current] if neighbor != previous
-#                 )
-#                 ordered.append(next_node)
-#                 previous, current = current, next_node
-#
-#             stacks.append(
-#                 SeriesStack(
-#                     transistors=[group[index] for index in ordered],
-#                     is_pmos=is_pmos,
-#                 )
-#             )
-#
-#     grouped_ids = {id(t) for stack in stacks for t in stack.transistors}
-#     transistors[:] = [t for t in transistors if id(t) not in grouped_ids]
-#
-#     return stacks
-#
-#
+def _drop(transistors: List[Transistor], used: Sequence[Transistor]) -> None:
+    used_ids = {id(transistor) for transistor in used}
+    transistors[:] = [transistor for transistor in transistors if id(transistor) not in used_ids]
+
+
+def _series_junctions(
+    transistors: Sequence[Transistor], external: AbstractSet[str]
+) -> Set[str]:
+    """Nets that connect exactly two diffusion terminals and nothing else.
+
+    A CMOS series stack (NAND pull-down, NOR pull-up) meets at a private
+    node. Rails, subcircuit ports, and nets that also touch a gate, a body,
+    or a third diffusion are outside the stack.
+    """
+    diffusion_count: Dict[str, int] = {}
+    other_count: Dict[str, int] = {}
+    for transistor in transistors:
+        for net in transistor.diffusion_terminals:
+            diffusion_count[net] = diffusion_count.get(net, 0) + 1
+        other_count[transistor.gate] = other_count.get(transistor.gate, 0) + 1
+        if transistor.body is not None:
+            other_count[transistor.body] = other_count.get(transistor.body, 0) + 1
+
+    return {
+        net
+        for net, count in diffusion_count.items()
+        if count == 2
+        and other_count.get(net, 0) == 0
+        and net not in external
+        and not _is_rail(net)
+    }
+
+
+def _shared_diffusion(left: Transistor, right: Transistor) -> Optional[str]:
+    shared = set(left.diffusion_terminals) & set(right.diffusion_terminals)
+    if len(shared) != 1:
+        return None
+    return next(iter(shared))
+
+
+def find_parallel_chains(transistors: List[Transistor]) -> List[ParallelChain]:
+    """Find same-type transistors sharing both diffusion terminals.
+
+    Matched transistors are removed from ``transistors`` in place. Runs
+    before series detection: a pair that shares a signal and a rail has only
+    one non-rail net, which would otherwise look like a series chain of two.
+    """
+    groups: Dict[Tuple[bool, frozenset[str]], List[Transistor]] = {}
+    for transistor in transistors:
+        terminals = frozenset(transistor.diffusion_terminals)
+        if len(terminals) != 2:
+            continue
+        key = (transistor.is_pmos, terminals)
+        groups.setdefault(key, []).append(transistor)
+
+    chains: List[ParallelChain] = []
+    used: List[Transistor] = []
+    for (is_pmos, _), members in groups.items():
+        if len(members) < 2:
+            continue
+        members.sort(
+            key=lambda transistor: (transistor.gate, transistor.primitive.instance_name)
+        )
+        chains.append(ParallelChain(transistors=tuple(members), is_pmos=is_pmos))
+        used.extend(members)
+
+    _drop(transistors, used)
+    return chains
+
+
+def _series_adjacency(
+    group: Sequence[Transistor], junctions: Set[str]
+) -> Dict[int, List[int]]:
+    net_to_indices: Dict[str, List[int]] = {}
+    for index, transistor in enumerate(group):
+        seen: Set[str] = set()
+        for net in transistor.diffusion_terminals:
+            if net in junctions and net not in seen:
+                seen.add(net)
+                net_to_indices.setdefault(net, []).append(index)
+
+    adjacency: Dict[int, List[int]] = {index: [] for index in range(len(group))}
+    for indices in net_to_indices.values():
+        if len(indices) != 2 or indices[0] == indices[1]:
+            continue
+        left, right = indices
+        # Both terminals in common is a parallel pair, not a series link.
+        same_terminals = set(group[left].diffusion_terminals) == set(
+            group[right].diffusion_terminals
+        )
+        if same_terminals:
+            continue
+        adjacency[left].append(right)
+        adjacency[right].append(left)
+    return adjacency
+
+
+def _order_series_path(
+    group: Sequence[Transistor], component: Sequence[int], adjacency: Dict[int, List[int]]
+) -> Optional[List[Transistor]]:
+    degrees = {node: len(adjacency[node]) for node in component}
+    if any(degree > 2 for degree in degrees.values()):
+        return None
+    if sum(degrees.values()) // 2 != len(component) - 1:
+        return None
+    endpoints = [node for node in component if degrees[node] == 1]
+    if len(endpoints) != 2:
+        return None
+
+    def walk(start: int) -> List[int]:
+        ordered = [start]
+        previous: Optional[int] = None
+        current = start
+        while len(ordered) < len(component):
+            next_node = next(
+                neighbor for neighbor in adjacency[current] if neighbor != previous
+            )
+            ordered.append(next_node)
+            previous, current = current, next_node
+        return ordered
+
+    def outer_net(order: Sequence[int]) -> str:
+        shared = _shared_diffusion(group[order[0]], group[order[1]])
+        if shared is None:
+            raise ValueError("series path neighbors do not share one diffusion net")
+        return group[order[0]].other_diffusion(shared)
+
+    candidates = [walk(endpoint) for endpoint in endpoints]
+    best = min(candidates, key=outer_net)
+    return [group[index] for index in best]
+
+
+def find_series_chains(
+    transistors: List[Transistor], junctions: Set[str]
+) -> List[SeriesChain]:
+    """Find same-type transistors chained through ``junctions``.
+
+    Each chain is a simple path (NAND/NOR stacks). Branched networks, such
+    as an AOI pull-down, are left for the inner series segments only.
+    Matched transistors are removed from ``transistors`` in place.
+    """
+    chains: List[SeriesChain] = []
+    for is_pmos in (True, False):
+        group = [transistor for transistor in transistors if transistor.is_pmos == is_pmos]
+        if len(group) < 2:
+            continue
+        adjacency = _series_adjacency(group, junctions)
+
+        visited: Set[int] = set()
+        for start in range(len(group)):
+            if start in visited or not adjacency[start]:
+                continue
+            component: List[int] = []
+            frontier = [start]
+            visited.add(start)
+            while frontier:
+                node = frontier.pop()
+                component.append(node)
+                for neighbor in adjacency[node]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        frontier.append(neighbor)
+            if len(component) < 2:
+                continue
+            ordered = _order_series_path(group, component, adjacency)
+            if ordered is None:
+                continue
+            chains.append(SeriesChain(transistors=tuple(ordered), is_pmos=is_pmos))
+
+    _drop(transistors, [transistor for chain in chains for transistor in chain.transistors])
+    return chains
+
+
 def find_super_nodes(
     primitives: Sequence[Primitive],
+    external_nets: AbstractSet[str] = frozenset(),
 ) -> Tuple[List[SuperNode], List[Primitive]]:
+    """Group transistors into supernodes. Ungrouped devices are leftovers.
 
+    ``external_nets`` (subcircuit ports) are not internal series junctions.
+    Nets on non-transistor devices are treated the same way.
+    """
     transistors: list[Transistor] = []
     other: list[Primitive] = []
 
@@ -426,13 +531,22 @@ def find_super_nodes(
         else:
             other.append(primitive)
 
+    external = set(external_nets)
+    for primitive in other:
+        external.update(primitive.nodes)
+
     super_nodes: List[SuperNode] = []
-    pmos = [t for t in transistors if t.is_pmos]
-    nmos = [t for t in transistors if t.is_nmos]
+    pmos = [transistor for transistor in transistors if transistor.is_pmos]
+    nmos = [transistor for transistor in transistors if transistor.is_nmos]
     # TGs first: they are the stricter match (both diffusions shared), and
     # their devices otherwise pair up with neighbors as false inverters.
     super_nodes.extend(find_transmission_gates(pmos, nmos))
     super_nodes.extend(find_inverters(pmos, nmos))
     remaining = pmos + nmos
-    leftover = other + [t.primitive for t in remaining]
+    # Count before parallel devices are removed. Dropping them would hide
+    # the fan-out that keeps an output from looking like a private series node.
+    junctions = _series_junctions(remaining, external)
+    super_nodes.extend(find_parallel_chains(remaining))
+    super_nodes.extend(find_series_chains(remaining, junctions))
+    leftover = other + [transistor.primitive for transistor in remaining]
     return super_nodes, leftover

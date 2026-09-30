@@ -3,13 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from spice2sch.models import Point, Primitive
-from spice2sch.patterns import Inverter, Transistor, TransmissionGate
+from spice2sch.patterns import (
+    Inverter,
+    ParallelChain,
+    SeriesChain,
+    Transistor,
+    TransmissionGate,
+)
 from spice2sch.placeable import (
     CompositePlaceable,
     Orientation,
     Pose,
     PrimitivePlaceable,
     from_inverter,
+    from_super_node,
     from_transmission_gate,
     place_in_row,
 )
@@ -193,15 +200,15 @@ def test_composite_rotation_carries_children():
     assert "C {testlib/pfet.sym} 50 0 1 0" in composite.draw()
 
 
-def test_from_inverter_wires_only_the_gates():
+def test_from_inverter_labels_gates_and_butts_drains():
     placeable = from_inverter(_inverter())
     placeable.place_center(Point(0, 0))
     text = placeable.draw()
-    assert text.count("sig_type=std_logic lab=A") == 1
+    assert text.count("sig_type=std_logic lab=A") == 2
     assert text.count("sig_type=std_logic lab=Y") == 1
-    assert "{lab=A}" in text
+    assert "{lab=A}" not in text
     assert "{lab=Y}" not in text
-    assert text.count("\nN ") == 1
+    assert "\nN " not in text
     assert text.count("sig_type=std_logic lab=VPWR") == 2
     assert text.count("sig_type=std_logic lab=VGND") == 2
 
@@ -285,6 +292,153 @@ def test_from_transmission_gate_layout():
     assert "{lab=A}" in text and "{lab=B}" in text
     assert text.count("sig_type=std_logic lab=A") == 1
     assert text.count("sig_type=std_logic lab=B") == 1
+
+
+def test_from_series_chain_stacks_output_above_ground():
+    # Listed ground-end first, the order the finder emits. Placement flips it.
+    n_gnd = _primitive(name="N1", symbol=_symbol(), nodes=["mid", "B", "VGND", "VNB"])
+    n_out = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=1)
+    chain = SeriesChain(
+        transistors=(_transistor(n_gnd, is_pmos=False), _transistor(n_out, is_pmos=False)),
+        is_pmos=False,
+    )
+    placeable = from_super_node(chain)
+    top, bottom = placeable.children["t0"], placeable.children["t1"]
+
+    assert top.primitive.instance_name == "N0"
+    assert top.nets["D"] == "Y" and top.nets["S"] == "mid"
+    assert bottom.nets["D"] == "mid" and bottom.nets["S"] == "VGND"
+    assert top.port_position("S") == bottom.port_position("D")
+    assert top.bbox.max_y <= bottom.bbox.min_y
+    assert top.port_position("G").x == bottom.port_position("G").x
+    assert set(placeable.port_names()) == {"top", "bot", "g0", "g1"}
+
+    text = placeable.draw()
+    assert text.count("sig_type=std_logic lab=mid") == 1
+    assert "{lab=mid}" not in text
+
+
+def test_from_series_chain_puts_power_on_top_of_pmos():
+    p_out = _primitive(name="P1", symbol=_pfet_symbol(), nodes=["Y", "B", "mid", "VPB"])
+    p_pwr = _primitive(
+        name="P0", symbol=_pfet_symbol(), nodes=["mid", "A", "VPWR", "VPB"], index=1
+    )
+    chain = SeriesChain(
+        transistors=(_transistor(p_out, is_pmos=True), _transistor(p_pwr, is_pmos=True)),
+        is_pmos=True,
+    )
+    placeable = from_super_node(chain)
+    top, bottom = placeable.children["t0"], placeable.children["t1"]
+
+    assert top.primitive.instance_name == "P0"
+    assert top.nets["S"] == "VPWR" and top.nets["D"] == "mid"
+    assert bottom.nets["S"] == "mid" and bottom.nets["D"] == "Y"
+    assert top.port_position("D") == bottom.port_position("S")
+    assert top.bbox.max_y <= bottom.bbox.min_y
+
+
+def test_from_series_chain_of_three_is_monotonic():
+    n2 = _primitive(name="N2", symbol=_symbol(), nodes=["m2", "C", "VGND", "VNB"])
+    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1)
+    n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "m1", "VNB"], index=2)
+    chain = SeriesChain(
+        transistors=tuple(_transistor(n, is_pmos=False) for n in (n2, n1, n0)),
+        is_pmos=False,
+    )
+    placeable = from_super_node(chain)
+    t0, t1, t2 = (placeable.children[key] for key in ("t0", "t1", "t2"))
+
+    assert t0.nets["D"] == "Y" and t2.nets["S"] == "VGND"
+    assert t0.port_position("S") == t1.port_position("D")
+    assert t1.port_position("S") == t2.port_position("D")
+    assert t0.bbox.max_y <= t1.bbox.min_y <= t1.bbox.max_y <= t2.bbox.min_y
+    text = placeable.draw()
+    assert text.count("sig_type=std_logic lab=m1") == 1
+    assert text.count("sig_type=std_logic lab=m2") == 1
+
+
+def test_from_series_chain_labels_a_shared_gate():
+    n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"])
+    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["mid", "A", "VGND", "VNB"], index=1)
+    chain = SeriesChain(
+        transistors=(_transistor(n0, is_pmos=False), _transistor(n1, is_pmos=False)),
+        is_pmos=False,
+    )
+    text = from_super_node(chain).draw()
+    assert text.count("sig_type=std_logic lab=A") == 2
+    assert "{lab=A}" not in text
+
+
+def test_from_series_chain_does_not_wire_a_gate_across_the_middle_device():
+    n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "m1", "VNB"])
+    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1)
+    n2 = _primitive(name="N2", symbol=_symbol(), nodes=["m2", "A", "VGND", "VNB"], index=2)
+    chain = SeriesChain(
+        transistors=tuple(_transistor(n, is_pmos=False) for n in (n0, n1, n2)),
+        is_pmos=False,
+    )
+    text = from_super_node(chain).draw()
+    assert text.count("sig_type=std_logic lab=A") == 2
+    assert text.count("sig_type=std_logic lab=B") == 1
+    assert "{lab=A}" not in text
+
+
+def test_from_parallel_chain_ties_diffusions_and_splits_gates():
+    p0 = _primitive(name="P0", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPB"])
+    p1 = _primitive(name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1)
+    chain = ParallelChain(
+        transistors=(_transistor(p0, is_pmos=True), _transistor(p1, is_pmos=True)),
+        is_pmos=True,
+    )
+    placeable = from_super_node(chain)
+    left, right = placeable.children["t0"], placeable.children["t1"]
+
+    assert left.nets["S"] == "VPWR" and left.nets["D"] == "Y"
+    assert right.nets["S"] == "VPWR" and right.nets["D"] == "Y"
+    assert left.port_position("S").y == right.port_position("S").y
+    assert left.port_position("D").y == right.port_position("D").y
+    assert right.bbox.min_x == left.bbox.max_x + 60
+    assert set(placeable.port_names()) == {"top", "bot", "g0", "g1"}
+
+    text = placeable.draw()
+    assert text.count("sig_type=std_logic lab=VPWR") == 1
+    assert text.count("sig_type=std_logic lab=Y") == 1
+    assert text.count("sig_type=std_logic lab=A") == 1
+    assert text.count("sig_type=std_logic lab=B") == 1
+    assert "{lab=VPWR}" in text and "{lab=Y}" in text
+    assert "{lab=A}" not in text
+
+
+def test_from_parallel_chain_labels_shared_gates_instead_of_crossing_body():
+    n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "VGND", "VNB"])
+    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["VGND", "A", "Y", "VNB"], index=1)
+    chain = ParallelChain(
+        transistors=(_transistor(n0, is_pmos=False), _transistor(n1, is_pmos=False)),
+        is_pmos=False,
+    )
+    placeable = from_super_node(chain)
+    left = placeable.children["t0"]
+    assert left.nets["D"] == "Y" and left.nets["S"] == "VGND"
+    text = placeable.draw()
+    # A straight gate-to-gate wire would run over N0's body pin and short A to VNB.
+    assert text.count("sig_type=std_logic lab=A") == 2
+    assert "{lab=A}" not in text
+
+
+def test_from_parallel_chain_of_three_labels_each_tie_once():
+    devices = [
+        _primitive(name=name, symbol=_symbol(), nodes=["Y", "A", "VGND", "VNB"], index=index)
+        for index, name in enumerate(("N0", "N1", "N2"))
+    ]
+    chain = ParallelChain(
+        transistors=tuple(_transistor(device, is_pmos=False) for device in devices),
+        is_pmos=False,
+    )
+    text = from_super_node(chain).draw()
+    assert text.count("sig_type=std_logic lab=Y") == 1
+    assert text.count("sig_type=std_logic lab=VGND") == 1
+    assert text.count("sig_type=std_logic lab=A") == 3
+    assert text.count("{lab=Y}") == 2
 
 
 def test_place_in_row_uses_bbox_width():
