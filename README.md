@@ -58,7 +58,7 @@ wl-paste | uvx spice2sch -o sky130_fd_sc_hd__xor3_4.sch
 
 - All devices (transistors, resistors, diodes, …) are placed by looking up xschem symbols under `PDK_ROOT` (`--pdk-root` or the `PDK_ROOT` env var), so a PDK root is required for any design with devices. Any PDK laid out the open_pdks way (`<variant>/libs.tech/xschem/<library>/*.sym`, with SPICE subckt refs of the form `<library>__<model>`) is supported, not just SkyWater SKY130.
 - Hierarchical standard-cell instances (e.g. `macro_sparecell`) are not expanded.
-- Although schematics will pass a Layout Versus Schematic (LVS) check, all components must be manually rearranged.
+- Although schematics will pass a Layout Versus Schematic (LVS) check, the automatic placement is only a starting point. Gates are drawn as wired pull-up/pull-down networks and laid out left to right by signal flow, with wires between neighboring stages; longer-range nets, feedback, rails, and ports are still connected by net labels, so larger cells usually still need some manual tidying.
 
 ## Running from source with uv
 

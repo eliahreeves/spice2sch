@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from spice2sch.models import Primitive
-from spice2sch.spice import POWER_GROUND_NETS
+from spice2sch.spice import GROUND_NETS, POWER_GROUND_NETS, POWER_NETS
 
 DRAIN_ALIASES = {"d", "drain"}
 GATE_ALIASES = {"g", "gate"}
@@ -140,33 +140,55 @@ class ParallelChain:
         return [t.primitive for t in self.transistors]
 
 
-#
-#
-# @dataclass(frozen=True)
-# class CurrentMirror:
-#     reference: Transistor
-#     mirrors: List[Transistor]
-#     tail_node: str
-#
-#     @property
-#     def primitives(self) -> List[Primitive]:
-#         return [self.reference.primitive] + [t.primitive for t in self.mirrors]
-#
-#
-# @dataclass(frozen=True)
-# class DifferentialPair:
-#     left: Transistor
-#     right: Transistor
-#     tail_node: str
-#
-#     @property
-#     def primitives(self) -> List[Primitive]:
-#         return [self.left.primitive, self.right.primitive]
+@dataclass(frozen=True)
+class SpLeaf:
+    transistor: Transistor
+    upper: str
+    lower: str
+
+
+@dataclass(frozen=True)
+class SpSeries:
+    parts: Tuple["SpNetwork", ...]
+    upper: str
+    lower: str
+
+
+@dataclass(frozen=True)
+class SpParallel:
+    branches: Tuple["SpNetwork", ...]
+    upper: str
+    lower: str
+
+
+SpNetwork = Union[SpLeaf, SpSeries, SpParallel]
+
+
+def sp_transistors(network: SpNetwork) -> List[Transistor]:
+    if isinstance(network, SpLeaf):
+        return [network.transistor]
+    children = network.parts if isinstance(network, SpSeries) else network.branches
+    return [transistor for child in children for transistor in sp_transistors(child)]
+
+
+@dataclass(frozen=True)
+class CmosGate:
+    pull_up: SpNetwork
+    pull_down: SpNetwork
+    output: str
+
+    @property
+    def primitives(self) -> List[Primitive]:
+        return [
+            t.primitive
+            for t in sp_transistors(self.pull_up) + sp_transistors(self.pull_down)
+        ]
 
 
 SuperNode = Union[
     Inverter,
     TransmissionGate,
+    CmosGate,
     SeriesChain,
     ParallelChain,
     # CurrentMirror, DifferentialPair
@@ -266,83 +288,11 @@ def find_transmission_gates(
     return gates
 
 
-#
-#
-# def find_current_mirrors(transistors: List[Transistor]) -> List[CurrentMirror]:
-#     """Find a diode-connected transistor (gate tied to its own drain or
-#     source) plus one or more same-type transistors sharing its gate and
-#     source nets. Matched transistors are removed from `transistors` in
-#     place."""
-#     mirrors_found: List[CurrentMirror] = []
-#     i = 0
-#     while i < len(transistors):
-#         reference = transistors[i]
-#         if not reference.is_diode_connected:
-#             i += 1
-#             continue
-#
-#         mirror_indices = [
-#             j
-#             for j, other in enumerate(transistors)
-#             if j != i
-#             and other.is_pmos == reference.is_pmos
-#             and other.gate == reference.gate
-#             and other.source == reference.source
-#             and not other.is_diode_connected
-#         ]
-#         if not mirror_indices:
-#             i += 1
-#             continue
-#
-#         mirrors = [transistors[j] for j in mirror_indices]
-#         for j in sorted(mirror_indices + [i], reverse=True):
-#             transistors.pop(j)
-#
-#         mirrors_found.append(
-#             CurrentMirror(
-#                 reference=reference, mirrors=mirrors, tail_node=reference.source
-#             )
-#         )
-#         # Don't advance `i`: the list shifted after popping.
-#     return mirrors_found
-#
-#
-# def find_differential_pairs(
-#     transistors: List[Transistor],
-# ) -> List[DifferentialPair]:
-#     """Find two same-type transistors sharing a common source ("tail") node
-#     but with distinct gate nets (differential inputs) and distinct drain
-#     nets (differential outputs). Matched transistors are removed from
-#     `transistors` in place."""
-#     pairs: List[DifferentialPair] = []
-#     i = 0
-#     while i < len(transistors):
-#         left = transistors[i]
-#         match_index: Optional[int] = None
-#         for j in range(i + 1, len(transistors)):
-#             right = transistors[j]
-#             if (
-#                 right.is_pmos == left.is_pmos
-#                 and right.source == left.source
-#                 and right.gate != left.gate
-#                 and right.drain != left.drain
-#             ):
-#                 match_index = j
-#                 break
-#         if match_index is None:
-#             i += 1
-#             continue
-#
-#         right = transistors.pop(match_index)
-#         transistors.pop(i)
-#         pairs.append(DifferentialPair(left=left, right=right, tail_node=left.source))
-#         # Don't advance `i`: the list shifted after popping.
-#     return pairs
-#
-#
 def _drop(transistors: List[Transistor], used: Sequence[Transistor]) -> None:
     used_ids = {id(transistor) for transistor in used}
-    transistors[:] = [transistor for transistor in transistors if id(transistor) not in used_ids]
+    transistors[:] = [
+        transistor for transistor in transistors if id(transistor) not in used_ids
+    ]
 
 
 def _series_junctions(
@@ -438,7 +388,9 @@ def _series_adjacency(
 
 
 def _order_series_path(
-    group: Sequence[Transistor], component: Sequence[int], adjacency: Dict[int, List[int]]
+    group: Sequence[Transistor],
+    component: Sequence[int],
+    adjacency: Dict[int, List[int]],
 ) -> Optional[List[Transistor]]:
     degrees = {node: len(adjacency[node]) for node in component}
     if any(degree > 2 for degree in degrees.values()):
@@ -483,7 +435,9 @@ def find_series_chains(
     """
     chains: List[SeriesChain] = []
     for is_pmos in (True, False):
-        group = [transistor for transistor in transistors if transistor.is_pmos == is_pmos]
+        group = [
+            transistor for transistor in transistors if transistor.is_pmos == is_pmos
+        ]
         if len(group) < 2:
             continue
         adjacency = _series_adjacency(group, junctions)
@@ -509,8 +463,177 @@ def find_series_chains(
                 continue
             chains.append(SeriesChain(transistors=tuple(ordered), is_pmos=is_pmos))
 
-    _drop(transistors, [transistor for chain in chains for transistor in chain.transistors])
+    _drop(
+        transistors,
+        [transistor for chain in chains for transistor in chain.transistors],
+    )
     return chains
+
+
+class _UnionFind:
+    def __init__(self) -> None:
+        self.parent: Dict[object, object] = {}
+
+    def find(self, item: object) -> object:
+        self.parent.setdefault(item, item)
+        while self.parent[item] != item:
+            self.parent[item] = self.parent[self.parent[item]]
+            item = self.parent[item]
+        return item
+
+    def union(self, first: object, second: object) -> None:
+        self.parent[self.find(first)] = self.find(second)
+
+
+def _parallel_groups(
+    edges: Sequence[Transistor], top: str, bottom: str
+) -> List[List[Transistor]]:
+    """Edges split into branches that meet only at ``top`` and ``bottom``."""
+    sets = _UnionFind()
+    for index, edge in enumerate(edges):
+        sets.find(index)
+        for net in edge.diffusion_terminals:
+            if net not in (top, bottom):
+                sets.union(index, ("net", net))
+    groups: Dict[object, List[Transistor]] = {}
+    for index, edge in enumerate(edges):
+        groups.setdefault(sets.find(index), []).append(edge)
+    return list(groups.values())
+
+
+def _reachable(edges: Sequence[Transistor], start: str, blocked: str) -> Set[str]:
+    seen = {start}
+    frontier = [start]
+    while frontier:
+        net = frontier.pop()
+        for edge in edges:
+            if net not in edge.diffusion_terminals:
+                continue
+            other = edge.other_diffusion(net)
+            if other not in seen and other != blocked:
+                seen.add(other)
+                frontier.append(other)
+    return seen
+
+
+def _series_cuts(edges: Sequence[Transistor], top: str, bottom: str) -> List[str]:
+    """Nets every ``top``-to-``bottom`` path passes through, nearest ``top`` first."""
+    nets = {net for edge in edges for net in edge.diffusion_terminals} - {top, bottom}
+    cuts = [net for net in nets if bottom not in _reachable(edges, top, net)]
+    distance: Dict[str, int] = {top: 0}
+    frontier = [top]
+    while frontier:
+        following: List[str] = []
+        for net in frontier:
+            for edge in edges:
+                if net in edge.diffusion_terminals:
+                    other = edge.other_diffusion(net)
+                    if other not in distance:
+                        distance[other] = distance[net] + 1
+                        following.append(other)
+        frontier = following
+    return sorted(cuts, key=lambda net: (distance.get(net, 0), net))
+
+
+def _sp_sort_key(network: SpNetwork) -> Tuple[int, str]:
+    transistors = sp_transistors(network)
+    return (len(transistors), min(t.gate for t in transistors))
+
+
+def decompose_series_parallel(
+    edges: Sequence[Transistor], top: str, bottom: str
+) -> Optional[SpNetwork]:
+    """``edges`` as a series-parallel network from ``top`` to ``bottom``, or
+    None if they don't form one (bridges, dangling branches, shorted devices)."""
+    if not edges or top == bottom:
+        return None
+    if len(edges) == 1:
+        edge = edges[0]
+        if set(edge.diffusion_terminals) == {top, bottom}:
+            return SpLeaf(edge, top, bottom)
+        return None
+
+    groups = _parallel_groups(edges, top, bottom)
+    if len(groups) > 1:
+        branches: List[SpNetwork] = []
+        for group in groups:
+            branch = decompose_series_parallel(group, top, bottom)
+            if branch is None:
+                return None
+            branches.append(branch)
+        return SpParallel(tuple(sorted(branches, key=_sp_sort_key)), top, bottom)
+
+    cuts = _series_cuts(edges, top, bottom)
+    if not cuts:
+        return None
+    chain = [top, *cuts, bottom]
+    position = {net: index for index, net in enumerate(chain)}
+    sets = _UnionFind()
+    for edge in edges:
+        inner = [net for net in edge.diffusion_terminals if net not in position]
+        for net in inner:
+            sets.union(("net", net), ("edge", id(edge)))
+        sets.find(("edge", id(edge)))
+    touches: Dict[object, Set[int]] = {}
+    for edge in edges:
+        root = sets.find(("edge", id(edge)))
+        touches.setdefault(root, set()).update(
+            position[net] for net in edge.diffusion_terminals if net in position
+        )
+    segments: Dict[int, List[Transistor]] = {}
+    for edge in edges:
+        ends = sorted(touches[sets.find(("edge", id(edge)))])
+        if len(ends) != 2 or ends[1] != ends[0] + 1:
+            return None
+        segments.setdefault(ends[0], []).append(edge)
+    if sorted(segments) != list(range(len(chain) - 1)):
+        return None
+    parts: List[SpNetwork] = []
+    for index in range(len(chain) - 1):
+        part = decompose_series_parallel(
+            segments[index], chain[index], chain[index + 1]
+        )
+        if part is None:
+            return None
+        parts.extend(part.parts if isinstance(part, SpSeries) else [part])
+    return SpSeries(tuple(parts), top, bottom)
+
+
+def _channel_connected(transistors: Sequence[Transistor]) -> List[List[Transistor]]:
+    """Transistors grouped by diffusion connectivity through signal nets."""
+    sets = _UnionFind()
+    for index, transistor in enumerate(transistors):
+        sets.find(index)
+        for net in transistor.diffusion_terminals:
+            if not _is_rail(net):
+                sets.union(index, ("net", net))
+    groups: Dict[object, List[Transistor]] = {}
+    for index, transistor in enumerate(transistors):
+        groups.setdefault(sets.find(index), []).append(transistor)
+    return list(groups.values())
+
+
+def find_cmos_gate(group: Sequence[Transistor]) -> Optional[CmosGate]:
+    """``group`` as one static CMOS gate, if it is exactly that."""
+    pmos = [t for t in group if t.is_pmos]
+    nmos = [t for t in group if t.is_nmos]
+    if not pmos or not nmos:
+        return None
+    p_nets = {net for t in pmos for net in t.diffusion_terminals}
+    n_nets = {net for t in nmos for net in t.diffusion_terminals}
+    outputs = [net for net in p_nets & n_nets if not _is_rail(net)]
+    supplies = [net for net in p_nets if net.upper() in POWER_NETS]
+    grounds = [net for net in n_nets if net.upper() in GROUND_NETS]
+    if len(outputs) != 1 or len(supplies) != 1 or len(grounds) != 1:
+        return None
+    output = outputs[0]
+    if any(t.gate == output for t in group):
+        return None
+    pull_up = decompose_series_parallel(pmos, supplies[0], output)
+    pull_down = decompose_series_parallel(nmos, output, grounds[0])
+    if pull_up is None or pull_down is None:
+        return None
+    return CmosGate(pull_up=pull_up, pull_down=pull_down, output=output)
 
 
 def find_super_nodes(
@@ -541,12 +664,24 @@ def find_super_nodes(
     # TGs first: they are the stricter match (both diffusions shared), and
     # their devices otherwise pair up with neighbors as false inverters.
     super_nodes.extend(find_transmission_gates(pmos, nmos))
-    super_nodes.extend(find_inverters(pmos, nmos))
-    remaining = pmos + nmos
-    # Count before parallel devices are removed. Dropping them would hide
-    # the fan-out that keeps an output from looking like a private series node.
-    junctions = _series_junctions(remaining, external)
-    super_nodes.extend(find_parallel_chains(remaining))
-    super_nodes.extend(find_series_chains(remaining, junctions))
-    leftover = other + [transistor.primitive for transistor in remaining]
+    # Count before anything else is removed. Dropping devices would hide the
+    # fan-out that keeps an output from looking like a private series node.
+    junctions = _series_junctions(pmos + nmos, external)
+    leftover = list(other)
+    for group in _channel_connected(pmos + nmos):
+        group_pmos = [t for t in group if t.is_pmos]
+        group_nmos = [t for t in group if t.is_nmos]
+        inverters = find_inverters(group_pmos, group_nmos)
+        if inverters and not group_pmos and not group_nmos:
+            super_nodes.extend(inverters)
+            continue
+        gate = find_cmos_gate(group)
+        if gate is not None:
+            super_nodes.append(gate)
+            continue
+        super_nodes.extend(inverters)
+        remaining = group_pmos + group_nmos
+        super_nodes.extend(find_parallel_chains(remaining))
+        super_nodes.extend(find_series_chains(remaining, junctions))
+        leftover.extend(transistor.primitive for transistor in remaining)
     return super_nodes, leftover

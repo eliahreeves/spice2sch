@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from spice2sch.patterns import (
+    CmosGate,
     Inverter,
     ParallelChain,
     SeriesChain,
+    SpLeaf,
+    SpNetwork,
+    SpParallel,
+    SpSeries,
+    Transistor,
     TransmissionGate,
+    decompose_series_parallel,
     find_super_nodes,
+    sp_transistors,
 )
 
 from .test_placeable import _pfet_symbol, _primitive, _symbol
@@ -19,6 +27,21 @@ def _nfet(name: str, d: str, g: str, s: str):
     return _primitive(name=name, symbol=_symbol(), nodes=[d, g, s, "VNB"])
 
 
+def _names(network: SpNetwork) -> list[str]:
+    return [t.primitive.instance_name for t in sp_transistors(network)]
+
+
+def _shape(network: SpNetwork) -> tuple[str, list[str]]:
+    """``("ser" | "par", names)`` for a network of single transistors."""
+    children = network.parts if isinstance(network, SpSeries) else network.branches
+    assert all(isinstance(child, SpLeaf) for child in children)
+    return ("ser" if isinstance(network, SpSeries) else "par", _names(network))
+
+
+def _transistors(primitives) -> list[Transistor]:
+    return [Transistor.try_from_primitive(p) for p in primitives]
+
+
 def test_inverter_detected():
     nodes, leftovers = find_super_nodes(
         [_pfet("P", "Y", "A", "VPWR"), _nfet("N", "Y", "A", "VGND")]
@@ -27,10 +50,9 @@ def test_inverter_detected():
     assert leftovers == []
 
 
-def test_nand2_is_not_an_inverter():
+def test_nand2_is_one_cmos_gate():
     # sky130_fd_sc_hd__nand2_1: P(A) and N(A) share gate A and net Y, but the
-    # NMOS sits on top of a series stack rather than on VGND. The pull-up is
-    # a parallel chain and the pull-down is a series chain.
+    # NMOS sits on top of a series stack rather than on VGND.
     nand2 = [
         _pfet("X0", "Y", "A", "VPWR"),
         _pfet("X1", "VPWR", "B", "Y"),
@@ -38,14 +60,13 @@ def test_nand2_is_not_an_inverter():
         _nfet("X3", "mid", "A", "Y"),
     ]
     nodes, leftovers = find_super_nodes(nand2)
-    assert [type(n) for n in nodes] == [ParallelChain, SeriesChain]
     assert leftovers == []
-    parallel, series = nodes
-    assert isinstance(parallel, ParallelChain) and parallel.is_pmos
-    assert isinstance(series, SeriesChain) and not series.is_pmos
-    assert [t.primitive.instance_name for t in parallel.transistors] == ["X0", "X1"]
-    # Free ends are VGND and Y; the chain starts at the lexicographically smaller one.
-    assert [t.primitive.instance_name for t in series.transistors] == ["X2", "X3"]
+    assert [type(n) for n in nodes] == [CmosGate]
+    gate = nodes[0]
+    assert isinstance(gate, CmosGate) and gate.output == "Y"
+    assert _shape(gate.pull_up) == ("par", ["X0", "X1"])
+    # Drawn from the output down to ground.
+    assert _shape(gate.pull_down) == ("ser", ["X3", "X2"])
 
 
 def test_clocked_transmission_gates_not_split_into_inverters():
@@ -75,14 +96,12 @@ def test_nor2_pull_up_is_series_and_pull_down_is_parallel():
         _nfet("N1", "VGND", "B", "Y"),
     ]
     nodes, leftovers = find_super_nodes(nor2)
-    assert [type(n) for n in nodes] == [ParallelChain, SeriesChain]
     assert leftovers == []
-    parallel, series = nodes
-    assert isinstance(parallel, ParallelChain) and not parallel.is_pmos
-    assert isinstance(series, SeriesChain) and series.is_pmos
-    assert parallel.terminals == {"Y", "VGND"}
-    assert [t.primitive.instance_name for t in parallel.transistors] == ["N0", "N1"]
-    assert [t.primitive.instance_name for t in series.transistors] == ["P0", "P1"]
+    gate = nodes[0]
+    assert isinstance(gate, CmosGate)
+    assert _shape(gate.pull_up) == ("ser", ["P0", "P1"])
+    assert _shape(gate.pull_down) == ("par", ["N0", "N1"])
+    assert gate.pull_down.upper == "Y" and gate.pull_down.lower == "VGND"
 
 
 def test_nand3_series_pull_down_and_parallel_pull_up():
@@ -96,12 +115,10 @@ def test_nand3_series_pull_down_and_parallel_pull_up():
     ]
     nodes, leftovers = find_super_nodes(nand3)
     assert leftovers == []
-    assert [type(n) for n in nodes] == [ParallelChain, SeriesChain]
-    parallel, series = nodes
-    assert isinstance(parallel, ParallelChain)
-    assert [t.primitive.instance_name for t in parallel.transistors] == ["P0", "P1", "P2"]
-    assert isinstance(series, SeriesChain)
-    assert [t.primitive.instance_name for t in series.transistors] == ["N2", "N1", "N0"]
+    gate = nodes[0]
+    assert isinstance(gate, CmosGate)
+    assert _shape(gate.pull_up) == ("par", ["P0", "P1", "P2"])
+    assert _shape(gate.pull_down) == ("ser", ["N0", "N1", "N2"])
 
 
 def test_parallel_nmos_on_a_rail_is_not_a_series_chain():
@@ -122,9 +139,8 @@ def test_same_gate_fingers_are_one_parallel_chain():
     assert [t.gate for t in chain.transistors] == ["A", "A"]
 
 
-def test_aoi21_keeps_inner_chains_and_leaves_the_outer_devices():
-    # Y = !((A & B) | C). Inner parallel PMOS and inner series NMOS group;
-    # the devices that tie those groups to the rails stay loose.
+def test_aoi21_is_a_series_parallel_gate():
+    # Y = !((A & B) | C).
     devices = [
         _pfet("PC", "midp", "C", "VPWR"),
         _pfet("PA", "Y", "A", "midp"),
@@ -134,13 +150,46 @@ def test_aoi21_keeps_inner_chains_and_leaves_the_outer_devices():
         _nfet("NC", "Y", "C", "VGND"),
     ]
     nodes, leftovers = find_super_nodes(devices)
-    assert [type(n) for n in nodes] == [ParallelChain, SeriesChain]
-    parallel, series = nodes
-    assert isinstance(parallel, ParallelChain) and parallel.is_pmos
-    assert isinstance(series, SeriesChain) and not series.is_pmos
-    assert {t.primitive.instance_name for t in parallel.transistors} == {"PA", "PB"}
-    assert {t.primitive.instance_name for t in series.transistors} == {"NA", "NB"}
-    assert {primitive.instance_name for primitive in leftovers} == {"PC", "NC"}
+    assert leftovers == []
+    gate = nodes[0]
+    assert isinstance(gate, CmosGate)
+    assert isinstance(gate.pull_up, SpSeries)
+    first, second = gate.pull_up.parts
+    assert _names(first) == ["PC"]
+    assert _shape(second) == ("par", ["PA", "PB"])
+    assert isinstance(gate.pull_down, SpParallel)
+    leaf, stack = gate.pull_down.branches
+    assert _names(leaf) == ["NC"]
+    assert _shape(stack) == ("ser", ["NA", "NB"])
+
+
+def test_bridge_network_falls_back_to_chains():
+    # A Wheatstone-bridge pull-down is not series-parallel.
+    devices = [
+        _pfet("P0", "Y", "A", "VPWR"),
+        _nfet("N0", "Y", "A", "m1"),
+        _nfet("N1", "Y", "B", "m2"),
+        _nfet("N2", "m1", "C", "m2"),
+        _nfet("N3", "m1", "D", "VGND"),
+        _nfet("N4", "m2", "E", "VGND"),
+    ]
+    pull_down = [t for t in _transistors(devices) if t.is_nmos]
+    assert decompose_series_parallel(pull_down, "Y", "VGND") is None
+    nodes, leftovers = find_super_nodes(devices)
+    assert not any(isinstance(n, CmosGate) for n in nodes)
+    assert len(leftovers) + sum(len(n.primitives) for n in nodes) == len(devices)
+
+
+def test_parallel_inverters_stay_inverters():
+    devices = [
+        _pfet("P0", "X", "A", "VPWR"),
+        _pfet("P1", "VPWR", "A", "X"),
+        _nfet("N0", "X", "A", "VGND"),
+        _nfet("N1", "VGND", "A", "X"),
+    ]
+    nodes, leftovers = find_super_nodes(devices)
+    assert leftovers == []
+    assert [type(n) for n in nodes] == [Inverter, Inverter]
 
 
 def test_output_port_is_not_a_series_junction():

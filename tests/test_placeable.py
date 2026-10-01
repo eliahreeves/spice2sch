@@ -4,21 +4,25 @@ from pathlib import Path
 
 from spice2sch.models import Point, Primitive
 from spice2sch.patterns import (
+    CmosGate,
     Inverter,
     ParallelChain,
     SeriesChain,
     Transistor,
     TransmissionGate,
+    find_super_nodes,
 )
 from spice2sch.placeable import (
     CompositePlaceable,
     Orientation,
     Pose,
     PrimitivePlaceable,
+    from_cmos_gate,
     from_inverter,
     from_super_node,
     from_transmission_gate,
     place_in_row,
+    render,
 )
 from spice2sch.symbols import BBox, SymbolDef, SymbolPin
 
@@ -200,15 +204,14 @@ def test_composite_rotation_carries_children():
     assert "C {testlib/pfet.sym} 50 0 1 0" in composite.draw()
 
 
-def test_from_inverter_labels_gates_and_butts_drains():
+def test_from_inverter_ties_gates_and_butts_drains():
     placeable = from_inverter(_inverter())
     placeable.place_center(Point(0, 0))
     text = placeable.draw()
-    assert text.count("sig_type=std_logic lab=A") == 2
+    # One label each on the input stub and the output stub.
+    assert text.count("sig_type=std_logic lab=A") == 1
     assert text.count("sig_type=std_logic lab=Y") == 1
-    assert "{lab=A}" not in text
-    assert "{lab=Y}" not in text
-    assert "\nN " not in text
+    assert "{lab=A}" in text and "{lab=Y}" in text
     assert text.count("sig_type=std_logic lab=VPWR") == 2
     assert text.count("sig_type=std_logic lab=VGND") == 2
 
@@ -357,7 +360,7 @@ def test_from_series_chain_of_three_is_monotonic():
     assert text.count("sig_type=std_logic lab=m2") == 1
 
 
-def test_from_series_chain_labels_a_shared_gate():
+def test_from_series_chain_ties_a_shared_gate():
     n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"])
     n1 = _primitive(name="N1", symbol=_symbol(), nodes=["mid", "A", "VGND", "VNB"], index=1)
     chain = SeriesChain(
@@ -365,8 +368,8 @@ def test_from_series_chain_labels_a_shared_gate():
         is_pmos=False,
     )
     text = from_super_node(chain).draw()
-    assert text.count("sig_type=std_logic lab=A") == 2
-    assert "{lab=A}" not in text
+    assert text.count("sig_type=std_logic lab=A") == 1
+    assert "{lab=A}" in text
 
 
 def test_from_series_chain_does_not_wire_a_gate_across_the_middle_device():
@@ -397,7 +400,10 @@ def test_from_parallel_chain_ties_diffusions_and_splits_gates():
     assert right.nets["S"] == "VPWR" and right.nets["D"] == "Y"
     assert left.port_position("S").y == right.port_position("S").y
     assert left.port_position("D").y == right.port_position("D").y
-    assert right.bbox.min_x == left.bbox.max_x + 60
+    # B's gate label clears P0's body label.
+    assert right.port_position("G").x - left.port_position("B").x >= 2 * 7.5 + 11 * (
+        len("VPB") + len("B")
+    )
     assert set(placeable.port_names()) == {"top", "bot", "g0", "g1"}
 
     text = placeable.draw()
@@ -438,7 +444,8 @@ def test_from_parallel_chain_of_three_labels_each_tie_once():
     assert text.count("sig_type=std_logic lab=Y") == 1
     assert text.count("sig_type=std_logic lab=VGND") == 1
     assert text.count("sig_type=std_logic lab=A") == 3
-    assert text.count("{lab=Y}") == 2
+    # A stub up from each drain and a bus between them.
+    assert text.count("{lab=Y}") == 5
 
 
 def test_place_in_row_uses_bbox_width():
@@ -454,3 +461,67 @@ def test_place_in_row_uses_bbox_width():
     assert b.bbox.min_x == a.bbox.max_x + 20
     assert a.center.y == 0
     assert b.center.y == 0
+
+
+def _nand2() -> CmosGate:
+    devices = [
+        _primitive(name="P0", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPB"]),
+        _primitive(name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1),
+        _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=2),
+        _primitive(name="N1", symbol=_symbol(), nodes=["mid", "B", "VGND", "VNB"], index=3),
+    ]
+    nodes, _ = find_super_nodes(devices)
+    (gate,) = nodes
+    assert isinstance(gate, CmosGate)
+    return gate
+
+
+def test_from_cmos_gate_puts_pull_up_over_pull_down_and_output_right():
+    placeable = from_cmos_gate(_nand2())
+    devices = list(placeable.children.values())
+    pmos = [d for d in devices if d.primitive.symbol.stem == "pfet"]
+    nmos = [d for d in devices if d.primitive.symbol.stem == "nfet"]
+    assert max(d.bbox.max_y for d in pmos) < min(d.bbox.min_y for d in nmos)
+    anchors = {net: (point, direction) for net, point, direction in placeable.anchors()}
+    assert anchors["VPWR"][1] == (0, -1) and anchors["VGND"][1] == (0, 1)
+    out, direction = anchors["Y"]
+    assert direction == (1, 0) and out[0] >= placeable.bbox.max_x
+    # The series junction is wired, so it needs no label in a full schematic.
+    text = render([placeable], external_nets={"A", "B", "Y"})
+    assert "lab=mid}" not in text.replace("{lab=mid}", "")
+    assert text.count("sig_type=std_logic lab=Y") == 1
+    assert text.count("sig_type=std_logic lab=VPWR") == 1
+    # A's gates line up, so they're tied with one label; B's don't.
+    assert text.count("sig_type=std_logic lab=A") == 1
+    assert text.count("sig_type=std_logic lab=B") == 2
+
+
+def test_render_drops_a_wire_that_would_short_two_nets():
+    device = PrimitivePlaceable(
+        _primitive(name="M1", symbol=_symbol(), nodes=["d", "g", "s", "b"])
+    )
+    # Straight down the diffusion line, across the body pin at (20, 0).
+    wire = ("d", (20, -30), (20, 30))
+    text = render([device], wires=[wire], label_everything=True)
+    assert "\nN " not in text
+    assert text.count("lab_pin.sym") == 4
+
+
+def test_transmission_gate_swap_sides_mirrors_the_terminals():
+    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"])
+    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["A", "EN", "B", "VNB"], index=1)
+    placeable = from_transmission_gate(
+        TransmissionGate(
+            pmos=_transistor(p_prim, is_pmos=True),
+            nmos=_transistor(n_prim, is_pmos=False),
+            terminal_a="A",
+            terminal_b="B",
+        )
+    )
+    assert placeable.sides == ("A", "B")
+    placeable.swap_sides()
+    assert placeable.sides == ("B", "A")
+    left, right = sorted(placeable.anchors(), key=lambda anchor: anchor[1][0])
+    assert (left[0], right[0]) == ("B", "A")
+    assert placeable.children["pmos"].nets["D"] == "B"
+    assert placeable.children["nmos"].nets["S"] == "A"

@@ -10,7 +10,8 @@ from spice2sch.cli_def import create_parser
 from spice2sch.spice import Spice, SubcktCall
 from spice2sch.symbols import SymbolIndex
 from spice2sch.patterns import find_super_nodes
-from spice2sch.placeable import build_placeables, next_label_name, place_in_row
+from spice2sch.placeable import build_placeables, next_label_name, render
+from spice2sch.placement import place
 
 
 def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
@@ -91,10 +92,14 @@ def main() -> None:
         external_nets = set(io_pins[0]) | set(io_pins[1])
         super_nodes, leftovers = find_super_nodes(primitives, external_nets)
         placeables = build_placeables(super_nodes, leftovers)
-        place_in_row(placeables, constants.primitive_origin, constants.spacing)
-
-        for placeable in placeables:
-            sch_output += placeable.draw()
+        wires = place(
+            placeables,
+            constants.primitive_origin,
+            constants.placement_gap,
+            inputs=io_pins[0],
+            outputs=io_pins[1],
+        )
+        sch_output += render(placeables, wires, external_nets)
 
         if args.output_file:
             with open(args.output_file, "w") as outfile:
