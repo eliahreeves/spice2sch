@@ -493,8 +493,9 @@ def test_from_cmos_gate_puts_pull_up_over_pull_down_and_output_right():
     assert "lab=mid}" not in text.replace("{lab=mid}", "")
     assert text.count("sig_type=std_logic lab=Y") == 1
     assert text.count("sig_type=std_logic lab=VPWR") == 1
-    # A's gates line up, so they're tied with one label; B's don't.
-    assert text.count("sig_type=std_logic lab=A") == 1
+    # The pull-down is centered under the pull-up, so gates don't
+    # align across the boundary; both A and B get separate labels.
+    assert text.count("sig_type=std_logic lab=A") == 2
     assert text.count("sig_type=std_logic lab=B") == 2
 
 

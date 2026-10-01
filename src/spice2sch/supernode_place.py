@@ -183,6 +183,10 @@ def _bus(net: str, xs: Iterable[int], y: int) -> List[Segment]:
     return [(net, (a, y), (b, y)) for a, b in zip(ordered, ordered[1:])]
 
 
+def _snap(value: float) -> int:
+    return int(round(value / GRID)) * GRID
+
+
 def _side_by_side(blocks: Sequence[_Block]) -> _Block:
     """Blocks left to right with their tops level, tied by a bus at each end."""
     for block in blocks:
@@ -192,8 +196,15 @@ def _side_by_side(blocks: Sequence[_Block]) -> _Block:
         shift = _snap_up(right + _BRANCH_GAP - block.extent.min_x)
         block.move(shift, 0)
         right = block.extent.max_x
+    max_bottom = max(block.bottom[1] for block in blocks)
     top_y = -_STACK_GAP
-    bottom_y = max(block.bottom[1] for block in blocks) + _STACK_GAP
+    bottom_y = max_bottom + _STACK_GAP
+    # Center shorter blocks vertically between the buses so that single
+    # transistors sit in the middle of their stub wires.
+    for block in blocks:
+        slack = max_bottom - block.bottom[1]
+        if slack > 0:
+            block.move(0, _snap(slack / 2))
     first = blocks[0]
     wires: List[Segment] = []
     for block in blocks:
@@ -202,11 +213,16 @@ def _side_by_side(blocks: Sequence[_Block]) -> _Block:
         wires.append((first.bottom_net, block.bottom, (block.bottom[0], bottom_y)))
     wires.extend(_bus(first.top_net, (b.top[0] for b in blocks), top_y))
     wires.extend(_bus(first.bottom_net, (b.bottom[0] for b in blocks), bottom_y))
+    # Use the center of the bus as the connection point so that stacking
+    # centers narrower blocks on wider ones and the source/drain rails
+    # run straight through the middle.
+    top_xs = sorted(set(b.top[0] for b in blocks))
+    mid_x = _snap((top_xs[0] + top_xs[-1]) / 2)
     return _Block(
         [device for block in blocks for device in block.devices],
         wires,
-        (first.top[0], top_y),
-        (first.bottom[0], bottom_y),
+        (mid_x, top_y),
+        (mid_x, bottom_y),
         first.top_net,
         first.bottom_net,
         False,
