@@ -10,7 +10,8 @@ from spice2sch.cli_def import create_parser
 from spice2sch.spice import Spice, SubcktCall
 from spice2sch.symbols import SymbolIndex
 from spice2sch.patterns import find_super_nodes
-from spice2sch.placeable import build_placeables, next_label_name, render
+from spice2sch.placeable import next_label_name, render
+from spice2sch.supernode_place import build_placeables
 from spice2sch.placement import place
 
 

@@ -575,16 +575,3 @@ def _pin_name(primitive: Primitive, aliases: AbstractSet[str]) -> str:
             return pin.name
     raise KeyError(f"no pin in {sorted(aliases)} on {primitive.instance_name}")
 
-
-# Supernode construction is implemented in a dedicated module; keep these
-# bindings for backward-compatible imports from spice2sch.placeable.
-from spice2sch import supernode_place as _supernode_place
-
-from_cmos_gate = _supernode_place.from_cmos_gate
-from_inverter = _supernode_place.from_inverter
-from_transmission_gate = _supernode_place.from_transmission_gate
-from_series_chain = _supernode_place.from_series_chain
-from_parallel_chain = _supernode_place.from_parallel_chain
-from_super_node = _supernode_place.from_super_node
-build_placeables = _supernode_place.build_placeables
-place_in_row = _supernode_place.place_in_row

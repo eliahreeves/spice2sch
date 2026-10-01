@@ -17,12 +17,14 @@ from spice2sch.placeable import (
     Orientation,
     Pose,
     PrimitivePlaceable,
+    render,
+)
+from spice2sch.supernode_place import (
     from_cmos_gate,
     from_inverter,
     from_super_node,
     from_transmission_gate,
     place_in_row,
-    render,
 )
 from spice2sch.symbols import BBox, SymbolDef, SymbolPin
 

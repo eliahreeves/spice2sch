@@ -10,12 +10,14 @@ from spice2sch.placeable import (
     Orientation,
     Placeable,
     PrimitivePlaceable,
-    build_placeables,
-    from_inverter,
-    from_transmission_gate,
     render,
 )
 from spice2sch.placement import _isotonic, place
+from spice2sch.supernode_place import (
+    build_placeables,
+    from_inverter,
+    from_transmission_gate,
+)
 
 from .test_placeable import _inverter, _pfet_symbol, _primitive, _symbol, _transistor
 
