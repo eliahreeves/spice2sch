@@ -35,9 +35,9 @@ def create_parser() -> ArgumentParser:
         "-o",
         "--output-file",
         type=str,
-        default=sys.stdout,
+        default=None,
         required=False,
-        help="Output file to write to",
+        help="Output file to write to (defaults to stdout)",
     )
     parser.add_argument(
         "--pdk-root",

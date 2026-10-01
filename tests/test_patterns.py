@@ -11,6 +11,7 @@ from spice2sch.patterns import (
     SpSeries,
     Transistor,
     TransmissionGate,
+    _first_match,
     decompose_series_parallel,
     find_super_nodes,
     sp_transistors,
@@ -40,6 +41,12 @@ def _shape(network: SpNetwork) -> tuple[str, list[str]]:
 
 def _transistors(primitives) -> list[Transistor]:
     return [Transistor.try_from_primitive(p) for p in primitives]
+
+
+def test_first_match_is_deterministic() -> None:
+    pins = {"drain": "net_drain", "d": "net_d"}
+    # Alias containers are sets in production code; ordering must still be stable.
+    assert _first_match(pins, {"drain", "d"}) == "net_d"
 
 
 def test_inverter_detected():

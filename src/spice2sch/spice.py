@@ -114,7 +114,7 @@ class Spice:
             strip_line = line.lstrip()
             if strip_line.startswith("+"):
                 if not new_content:
-                    ValueError("Unexpected + at beginning of file")
+                    raise ValueError("Unexpected + at beginning of file")
                 new_content[-1] += f" {strip_line[1:].lstrip()}"
             else:
                 new_content.append(line)

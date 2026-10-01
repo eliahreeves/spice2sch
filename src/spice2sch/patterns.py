@@ -20,7 +20,7 @@ def _pin_node_map(primitive: Primitive) -> Dict[str, str]:
 
 
 def _first_match(pins: Dict[str, str], aliases: Set[str]) -> Optional[str]:
-    for alias in aliases:
+    for alias in sorted(aliases):
         if alias in pins:
             return pins[alias]
     return None
