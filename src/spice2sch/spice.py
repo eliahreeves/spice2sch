@@ -1,10 +1,35 @@
 from typing import List, Tuple
 
+# Supply nets, drawn at the top of a CMOS stack. Shared with I/O
+# classification below and with chain placement in `placeable.py`.
+POWER_NETS = {
+    "VDD",
+    "VCC",
+    "VPWR",
+    "VPWRIN",
+    "LOWLVPWR",
+    "KAPWR",
+    "VPB",
+}
+
+# Ground nets, drawn at the bottom of a CMOS stack.
+GROUND_NETS = {
+    "VSS",
+    "GND",
+    "VGND",
+    "VNB",
+}
+
+# Rails are never internal series junctions, even when some local subset of
+# a design happens to touch one with exactly two diffusion terminals.
+POWER_GROUND_NETS = POWER_NETS | GROUND_NETS
+
+
 class SubcktCall:
     name: str
     nodes: List[str]
     subckt_ref: str
-    params: List[Tuple[str, float]]
+    params: List[Tuple[str, str]]
 
     def __init__(self, call_str: str):
         tokens = call_str.split()
@@ -15,23 +40,28 @@ class SubcktCall:
         if not self.name.startswith("x") and not self.name.startswith("X"):
             raise ValueError("Subckt call must begin with X")
 
-        param_index = len(tokens)-1
+        param_index = len(tokens) - 1
 
         while "=" in tokens[param_index]:
             param_index -= 1
 
         self.nodes = tokens[1:param_index]
         self.subckt_ref = tokens[param_index]
-        self.params = tokens[param_index+1:]
+        params: List[Tuple[str, str]] = []
+        for token in tokens[param_index + 1 :]:
+            name, value = token.split("=", 1)
+            params.append((name, value))
+        self.params = params
 
 
 class Spice:
     content: List[str]
-    def __init__(cls, spice_input) -> "Spice":
-        cls.content = spice_input.split("\n")
-        cls.__remove_comments()
-        cls.__append_plus()
-        cls.__reduce_to_subckt_definition()
+
+    def __init__(self, spice_input):
+        self.content = spice_input.split("\n")
+        self.__remove_comments()
+        self.__append_plus()
+        self.__reduce_to_subckt_definition()
 
     def extract_subckt_calls(self) -> List[SubcktCall]:
         return [SubcktCall(subckt_call) for subckt_call in self.content[1:-1]]
@@ -45,14 +75,12 @@ class Spice:
 
         ports = tokens[2:]
 
-        power_ground = {"VDD", "VCC", "VSS", "GND", "VGND", "VPWR", "VNB", "VPB", "VPWRIN", "LOWLVPWR"}
-
         inputs: List[str] = []
         outputs: List[str] = []
         found_inputs = False
 
         for port in ports:
-            is_port_power_ground = port in power_ground
+            is_port_power_ground = port in POWER_GROUND_NETS
             if is_port_power_ground:
                 found_inputs = True
 
@@ -62,7 +90,6 @@ class Spice:
                 outputs.append(port)
         return (inputs, outputs)
 
-
     def __reduce_to_subckt_definition(self):
         start = 0
         for index, line in enumerate(self.content):
@@ -70,10 +97,9 @@ class Spice:
             if line.lower().startswith(".subckt"):
                 start = index
             elif line.lower().startswith(".ends"):
-                self.content = self.content[start: index + 1]
+                self.content = self.content[start : index + 1]
                 return
         raise ValueError("Invalid format")
-
 
     def __remove_comments(self):
         new_content = []
@@ -82,14 +108,13 @@ class Spice:
                 new_content.append(line)
         self.content = new_content
 
-
     def __append_plus(self):
         new_content = []
         for line in self.content:
             strip_line = line.lstrip()
             if strip_line.startswith("+"):
                 if not new_content:
-                    ValueError("Unexpected + at beginning of file")
+                    raise ValueError("Unexpected + at beginning of file")
                 new_content[-1] += f" {strip_line[1:].lstrip()}"
             else:
                 new_content.append(line)

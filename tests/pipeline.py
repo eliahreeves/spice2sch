@@ -14,14 +14,23 @@ class PipelineError(RuntimeError):
     clean LVS mismatch, which is reported as a normal test failure."""
 
 
-def generate_schematic(reference_spice: Path, out_sch: Path) -> None:
+def generate_schematic(
+    reference_spice: Path, out_sch: Path, pdk_root: Path | None = None
+) -> None:
+    import os
+
+    env = os.environ.copy()
+    if pdk_root is not None:
+        env["PDK_ROOT"] = str(pdk_root)
+
     result = subprocess.run(
         ["uv", "run", "spice2sch", "-i", str(reference_spice), "-o", str(out_sch)],
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
-        raise PipelineError(f"spice2sch failed:\n{result.stderr}")
+        raise PipelineError(f"spice2sch failed:\n{result.stdout}\n{result.stderr}")
 
 
 def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
@@ -54,6 +63,40 @@ def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
             f"(see {log_path})"
         )
     return netlist_path
+
+
+def generate_svg(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
+    """Export an SVG for a schematic via xschem, matching sky130_schematics."""
+    log_path = workdir / "logs" / f"{cell_name}.svg.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    svg_path = workdir / "svg" / f"{cell_name}.svg"
+    svg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [
+            "xschem",
+            "--no_x",
+            "--log",
+            str(log_path),
+            "--script",
+            str(SCRIPTS_DIR / "generate_svg.tcl"),
+        ],
+        cwd=workdir,
+        env={
+            **_passthrough_env(pdk_root),
+            "SCHEMATIC": cell_name,
+            "PWD": str(workdir),
+        },
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not svg_path.exists():
+        raise PipelineError(
+            f"xschem SVG export failed for {cell_name}:\n"
+            f"{result.stdout}\n{result.stderr}\n"
+            f"(see {log_path})"
+        )
+    return svg_path
 
 
 @dataclass
@@ -91,8 +134,48 @@ def run_lvs(
     if result.returncode != 0 and not report_path.exists():
         raise PipelineError(f"netgen failed to run:\n{result.stderr}")
 
-    passed = bool(re.search(r"Circuits match uniquely", report_text))
+    passed = bool(
+        re.search(r"Circuits match uniquely", report_text)
+    ) or _is_matching_empty_circuit(reference_spice, generated_netlist, report_text)
     return LvsResult(passed=passed, report_text=report_text, report_path=report_path)
+
+
+def _spice_has_devices(path: Path) -> bool:
+    """Return True if a SPICE file has any device/instance lines inside a subckt."""
+    in_subckt = False
+    for raw in path.read_text().splitlines():
+        line = raw.split("*", 1)[0].strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if lower.startswith(".subckt"):
+            in_subckt = True
+            continue
+        if lower.startswith(".ends"):
+            in_subckt = False
+            continue
+        if in_subckt and not lower.startswith("."):
+            return True
+    return False
+
+
+def _is_matching_empty_circuit(
+    reference_spice: Path, generated_netlist: Path, report_text: str
+) -> bool:
+    """Pass only when *both* netlists are empty and pins still match.
+
+    Netgen reports empty generated cells as "Not checked" even when the
+    reference has devices, so trusting that message alone lets blank
+    schematics slip through.
+    """
+    if _spice_has_devices(reference_spice) or _spice_has_devices(generated_netlist):
+        return False
+    if not re.search(r"has no elements and/or nodes\.\s*Not checked\.", report_text):
+        return False
+    return (
+        "Cell pin lists are equivalent." in report_text
+        and "**Mismatch**" not in report_text
+    )
 
 
 def prepare_workdir(tmp_path: Path, repo_root: Path) -> None:

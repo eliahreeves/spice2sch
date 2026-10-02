@@ -1,6 +1,7 @@
 from argparse import ArgumentParser, FileType
 from importlib.metadata import version, PackageNotFoundError
 from typing import NoReturn
+import os
 import sys
 
 
@@ -34,9 +35,19 @@ def create_parser() -> ArgumentParser:
         "-o",
         "--output-file",
         type=str,
-        default=sys.stdout,
+        default=None,
         required=False,
-        help="Output file to write to",
+        help="Output file to write to (defaults to stdout)",
+    )
+    parser.add_argument(
+        "--pdk-root",
+        type=str,
+        default=os.environ.get("PDK_ROOT"),
+        help=(
+            "PDK root containing xschem symbol libraries, e.g. "
+            "<variant>/libs.tech/xschem/<library>/*.sym (default: PDK_ROOT). "
+            "Required for any design with devices."
+        ),
     )
 
     def error_and_exit(message: str) -> NoReturn:

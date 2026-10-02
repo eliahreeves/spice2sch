@@ -4,11 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from .pipeline import generate_schematic, netlist_schematic, prepare_workdir, run_lvs
+from .pipeline import (
+    generate_schematic,
+    generate_svg,
+    netlist_schematic,
+    prepare_workdir,
+    run_lvs,
+)
 
 REPO_ROOT = Path(__file__).parents[1]
+SVG_DIR = REPO_ROOT / ".cache" / "svg"
 KNOWN_FAILURES = {
-    "sky130_fd_sc_hd__diode_2": "non-transistor component, see README limitations",
+    "sky130_fd_sc_hd__macro_sparecell": "hierarchical stdcell instances, not PDK primitives",
 }
 
 
@@ -22,7 +29,12 @@ def test_lvs_round_trip(reference_spice: Path, tmp_path: Path, pdk_root: Path):
 
     sch_path = tmp_path / "schematics" / f"{cell_name}.sch"
     sch_path.parent.mkdir(parents=True)
-    generate_schematic(reference_spice, sch_path)
+    generate_schematic(reference_spice, sch_path, pdk_root)
+
+    svg_path = generate_svg(tmp_path, cell_name, pdk_root)
+    SVG_DIR.mkdir(parents=True, exist_ok=True)
+    persisted = SVG_DIR / f"{cell_name}.svg"
+    persisted.write_bytes(svg_path.read_bytes())
 
     generated_netlist = netlist_schematic(tmp_path, cell_name, pdk_root)
 
