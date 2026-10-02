@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from spice2sch.models import Point
 from spice2sch.placeable import (
@@ -98,7 +98,9 @@ def _users(nodes: Sequence[_Node]) -> Dict[str, List[int]]:
     return users
 
 
-def _columns(nodes: Sequence[_Node], inputs: Sequence[str], outputs: Set[str]) -> List[int]:
+def _columns(
+    nodes: Sequence[_Node], inputs: Sequence[str], outputs: Set[str]
+) -> List[int]:
     """Column of every node: one past the latest column its inputs come from."""
     level: Dict[str, int] = {net: 0 for net in inputs}
     columns: List[Optional[int]] = [None] * len(nodes)
@@ -114,12 +116,16 @@ def _columns(nodes: Sequence[_Node], inputs: Sequence[str], outputs: Set[str]) -
         batch = [index for index in pending if ready(index)]
         if not batch:
             # A loop (latch, flop): start it from its best-known member.
-            batch = [max(pending, key=lambda i: (len(nodes[i].nets & level.keys()), -i))]
+            batch = [
+                max(pending, key=lambda i: (len(nodes[i].nets & level.keys()), -i))
+            ]
         placed: List[Tuple[int, int]] = []
         for index in batch:
             node = nodes[index]
             sources = node.gates if node.static else node.nets
-            placed.append((index, max((level[n] for n in sources if n in level), default=0)))
+            placed.append(
+                (index, max((level[n] for n in sources if n in level), default=0))
+            )
         for index, column in placed:
             node = nodes[index]
             columns[index] = column
@@ -132,8 +138,10 @@ def _columns(nodes: Sequence[_Node], inputs: Sequence[str], outputs: Set[str]) -
     last = max(result, default=0)
     users = _users(nodes)
     for index, node in enumerate(nodes):
-        if node.static and node.diffusion and all(
-            users[n] == [index] and n in outputs for n in node.diffusion
+        if (
+            node.static
+            and node.diffusion
+            and all(users[n] == [index] and n in outputs for n in node.diffusion)
         ):
             result[index] = last
     used = sorted(set(result))
@@ -200,11 +208,15 @@ def _isotonic(targets: Sequence[float], weights: Sequence[float]) -> List[float]
             value, w, n = blocks.pop()
             prev_value, prev_w, prev_n = blocks.pop()
             total = prev_w + w
-            blocks.append(((prev_value * prev_w + value * w) / total, total, prev_n + n))
+            blocks.append(
+                ((prev_value * prev_w + value * w) / total, total, prev_n + n)
+            )
     return [value for value, _, n in blocks for _ in range(n)]
 
 
-def _channel_wires(net: str, track: int, left: Sequence[XY], right: Sequence[XY]) -> List[Segment]:
+def _channel_wires(
+    net: str, track: int, left: Sequence[XY], right: Sequence[XY]
+) -> List[Segment]:
     """Runs from ``left`` terminals across to a vertical track at x=``track``
     and on to the ``right`` terminals, split wherever runs meet the track."""
     ys = sorted({y for _, y in left} | {y for _, y in right})
@@ -217,8 +229,8 @@ def _channel_wires(net: str, track: int, left: Sequence[XY], right: Sequence[XY]
 @dataclass
 class _ChannelNet:
     net: str
-    left: List[XY]  # relative to the left column's right edge
-    right: List[Tuple[int, XY]]  # (node, point relative to that node's origin)
+    left: List[Tuple[int, XY]]  # (node, point relative to that node's origin)
+    right: List[Tuple[int, XY]]
     track: int = 0
 
 
@@ -264,7 +276,9 @@ class _Layout:
         extent = self.nodes[index].extent
         return extent.max_y - extent.min_y
 
-    def _pack(self, column: int, desired: Dict[int, float], weight: Dict[int, float]) -> None:
+    def _pack(
+        self, column: int, desired: Dict[int, float], weight: Dict[int, float]
+    ) -> None:
         """Origins as close to ``desired`` as the column's order and spacing allow."""
         members = self.order[column]
         offsets: List[float] = []
@@ -354,9 +368,6 @@ class _Layout:
     def _channel(self, column: int, users: Dict[str, Set[int]]) -> List[_ChannelNet]:
         """Internal nets used only by ``column`` and the next one, all of whose
         terminals can run straight into the channel between them.
-
-        Left points are relative to the left column's right edge; right
-        points to their own node's origin.
         """
         width = self._width(column)
         found: Dict[str, _ChannelNet] = {}
@@ -373,12 +384,14 @@ class _Layout:
                         run: Segment = (net, (x, y), (width, y))
                     else:
                         run = (net, (0, y), (x, y))
-                    if direction != facing or not self._run_is_clear(index, origin, run):
+                    if direction != facing or not self._run_is_clear(
+                        index, origin, run
+                    ):
                         rejected.add(net)
                         continue
                     entry = found.setdefault(net, _ChannelNet(net, [], []))
                     if side == column:
-                        entry.left.append((x - width, y))
+                        entry.left.append((index, (px, py)))
                     else:
                         entry.right.append((index, (px, py)))
         return [
@@ -387,29 +400,55 @@ class _Layout:
             if net not in rejected and entry.left and entry.right
         ]
 
-    def _inset(self, index: int) -> int:
-        """Origin's distance from its column's left edge, kept on the grid."""
-        return _snap_up(-self.nodes[index].extent.min_x)
+    def _extent(self, index: int, unlabeled: AbstractSet[str] = frozenset()) -> BBox:
+        """Horizontal packing box: wired-net labels and side-facing rail labels
+        are omitted so they can sit in the channel rather than pad the column."""
+        return self.nodes[index].placeable.local_extent(unlabeled, side_rails=False)
 
-    def _width(self, column: int) -> int:
+    def _inset(self, index: int, unlabeled: AbstractSet[str] = frozenset()) -> int:
+        """Origin's distance from its column's left edge, kept on the grid."""
+        return _snap_up(-self._extent(index, unlabeled).min_x)
+
+    def _width(
+        self,
+        column: int,
+        unlabeled_left: AbstractSet[str] = frozenset(),
+        unlabeled_right: AbstractSet[str] = frozenset(),
+    ) -> int:
         return _snap_up(
-            max(self._inset(i) + self.nodes[i].extent.max_x for i in self.order[column])
+            max(
+                self._inset(i, unlabeled_left) + self._extent(i, unlabeled_right).max_x
+                for i in self.order[column]
+            )
         )
 
-    def _assign_tracks(self, nets: List[_ChannelNet]) -> Tuple[List[_ChannelNet], int]:
+    def _assign_tracks(
+        self, nets: List[_ChannelNet], edge: int, gap: int
+    ) -> Tuple[List[_ChannelNet], int]:
         """Give each net a track where none of its wires end on another net's.
 
-        Track ``k`` sits ``(k + 1) * GRID`` right of the left column.
+        Tracks sit at the right of the channel (after ``gap``), so extra gap
+        lengthens the shared run from the left column rather than the stubs
+        into the right column.
         """
+
+        def points(entry: _ChannelNet) -> Tuple[List[XY], List[XY]]:
+            left = [
+                (self.xs[i] + p[0] - edge, self.ys[i] + p[1]) for i, p in entry.left
+            ]
+            right = [(_FAR, self.ys[i] + p[1]) for i, p in entry.right]
+            return left, right
+
         def span(entry: _ChannelNet) -> int:
-            ys = [y for _, y in entry.left] + [self.ys[i] + p[1] for i, p in entry.right]
+            left, right = points(entry)
+            ys = [y for _, y in left] + [y for _, y in right]
             return max(ys) - min(ys)
 
         placed: List[Tuple[_ChannelNet, List[Segment]]] = []
         for entry in sorted(nets, key=lambda e: (span(e), e.net)):
-            right = [(_FAR, self.ys[i] + p[1]) for i, p in entry.right]
+            left, right = points(entry)
             for track in range(_MAX_TRACKS):
-                wires = _channel_wires(entry.net, (track + 1) * GRID, entry.left, right)
+                wires = _channel_wires(entry.net, gap + (track + 1) * GRID, left, right)
                 if not any(
                     wires_join(mine, theirs)
                     for _, others in placed
@@ -423,28 +462,51 @@ class _Layout:
         return [entry for entry, _ in placed], used
 
     def route(self, gap: int) -> List[Segment]:
-        """Set every column's x and return the wires drawn across channels."""
+        """Set every column's x and return the wires drawn across channels.
+
+        Column widths omit labels on nets that are wired across a channel, so
+        ``gap`` is clearance between the remaining content (bodies, stubs, and
+        labels that are still drawn), not between phantom label boxes.
+        """
         users: Dict[str, Set[int]] = {}
         for index, node in enumerate(self.nodes):
             for net, _, _ in node.terminals:
                 users.setdefault(net, set()).add(self.columns[index])
+        candidates = [
+            self._channel(column, users) for column in range(len(self.order) - 1)
+        ]
+        # Assume every candidate is wired, place, then drop nets that could not
+        # get a track (they keep labels) and place again with true track counts.
+        skip: List[Set[str]] = [{entry.net for entry in group} for group in candidates]
         channels: List[Tuple[int, List[_ChannelNet]]] = []
-        x = 0
-        for column, members in enumerate(self.order):
-            for index in members:
-                self.xs[index] = x + self._inset(index)
-            if column + 1 == len(self.order):
-                break
-            edge = x + self._width(column)
-            routed, tracks = self._assign_tracks(self._channel(column, users))
-            channels.append((edge, routed))
-            x = edge + gap + tracks * GRID
+        for _ in range(2):
+            x = 0
+            channels = []
+            next_skip: List[Set[str]] = []
+            for column, members in enumerate(self.order):
+                left = skip[column - 1] if column > 0 else set()
+                right = skip[column] if column < len(skip) else set()
+                for index in members:
+                    self.xs[index] = x + self._inset(index, left)
+                if column + 1 == len(self.order):
+                    break
+                edge = x + self._width(column, left, right)
+                routed, tracks = self._assign_tracks(candidates[column], edge, gap)
+                channels.append((edge, routed))
+                next_skip.append({entry.net for entry in routed})
+                x = edge + gap + tracks * GRID
+            skip = next_skip
         wires: List[Segment] = []
         for edge, routed in channels:
             for entry in routed:
-                left = [(edge + px, py) for px, py in entry.left]
+                left = [(self.xs[i] + p[0], self.ys[i] + p[1]) for i, p in entry.left]
                 right = [(self.xs[i] + p[0], self.ys[i] + p[1]) for i, p in entry.right]
-                wires += _channel_wires(entry.net, edge + (entry.track + 1) * GRID, left, right)
+                wires += _channel_wires(
+                    entry.net,
+                    edge + gap + (entry.track + 1) * GRID,
+                    left,
+                    right,
+                )
         return wires
 
     def apply(self, origin: Point) -> None:

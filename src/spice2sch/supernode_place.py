@@ -320,7 +320,11 @@ def _from_networks(
     for end in (pull_up.bottom, pull_down.top):
         if end != junction:
             wires.append((output, end, junction))
-    right = _snap_up(max(pull_up.extent.max_x, pull_down.extent.max_x) + GRID)
+    # Past the devices, with at least a short stub off the junction. Body-pin
+    # labels sit at other y's, so the output does not clear them.
+    right = _snap_up(
+        max([junction[0] + _STUB] + [d.bbox.max_x + GRID for d in devices])
+    )
     out = (right, junction[1])
     wires.append((output, junction, out))
     anchors: List[Anchor] = [

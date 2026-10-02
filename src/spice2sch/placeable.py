@@ -159,9 +159,19 @@ class Placeable(ABC):
         """Every pin as ``(net, (x, y))`` in the local frame."""
         return [(pin.net, pin.point) for pin in device_pins(self.local_devices())]
 
-    def local_extent(self) -> BBox:
+    def local_extent(
+        self,
+        unlabeled: AbstractSet[str] = frozenset(),
+        *,
+        side_rails: bool = True,
+    ) -> BBox:
         """``local_bbox`` grown to cover the wires and the net labels drawn
-        on its own (assuming every net that leaves it gets a label)."""
+        on its own (assuming every net that leaves it gets a label, except
+        those in ``unlabeled`` which are expected to be wired externally).
+
+        When ``side_rails`` is false, left/right-facing rail labels are omitted
+        so column packing can let them hang into the wiring channel.
+        """
         devices = self.local_devices()
         segments = self.local_segments()
         anchors = self.local_anchors()
@@ -171,6 +181,10 @@ class Placeable(ABC):
             site = component.site(pins, anchors, internal_ok=True)
             if site is not None:
                 net, point, direction = site
+                if net in unlabeled:
+                    continue
+                if not side_rails and is_rail(net) and direction[0] != 0:
+                    continue
                 boxes.append(_label_extent(point, direction, net))
         return reduce(BBox.union, boxes)
 
@@ -574,4 +588,3 @@ def _pin_name(primitive: Primitive, aliases: AbstractSet[str]) -> str:
         if pin.name.lower() in aliases:
             return pin.name
     raise KeyError(f"no pin in {sorted(aliases)} on {primitive.instance_name}")
-

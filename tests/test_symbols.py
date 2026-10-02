@@ -32,8 +32,12 @@ def multi_library_pdk(tmp_path: Path) -> Path:
     root = tmp_path / "fake_pdk"
     xschem_dir = root / "some_pdk_variant" / "libs.tech" / "xschem"
 
-    _write_symbol(xschem_dir / "lib_one" / "foo.sym", library="lib_one", stem_model="foo")
-    _write_symbol(xschem_dir / "lib_two" / "foo.sym", library="lib_two", stem_model="foo")
+    _write_symbol(
+        xschem_dir / "lib_one" / "foo.sym", library="lib_one", stem_model="foo"
+    )
+    _write_symbol(
+        xschem_dir / "lib_two" / "foo.sym", library="lib_two", stem_model="foo"
+    )
 
     return root
 

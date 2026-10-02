@@ -37,7 +37,12 @@ def _symbol(
     bbox: BBox | None = None,
 ) -> SymbolDef:
     if pins is None:
-        pins = [("D", 20.0, -30.0), ("G", -20.0, 0.0), ("S", 20.0, 30.0), ("B", 20.0, 0.0)]
+        pins = [
+            ("D", 20.0, -30.0),
+            ("G", -20.0, 0.0),
+            ("S", 20.0, 30.0),
+            ("B", 20.0, 0.0),
+        ]
     if bbox is None:
         bbox = BBox(-20.0, -30.0, 20.0, 30.0)
     return SymbolDef(
@@ -59,7 +64,12 @@ def _pfet_symbol() -> SymbolDef:
     return _symbol(
         stem="pfet",
         device_type="pmos",
-        pins=[("D", 20.0, 30.0), ("G", -20.0, 0.0), ("S", 20.0, -30.0), ("B", 20.0, 0.0)],
+        pins=[
+            ("D", 20.0, 30.0),
+            ("G", -20.0, 0.0),
+            ("S", 20.0, -30.0),
+            ("B", 20.0, 0.0),
+        ],
     )
 
 
@@ -84,13 +94,22 @@ def _primitive(
 def _transistor(primitive: Primitive, is_pmos: bool) -> Transistor:
     drain, gate, source, body = primitive.nodes
     return Transistor(
-        primitive=primitive, drain=drain, gate=gate, source=source, body=body, is_pmos=is_pmos
+        primitive=primitive,
+        drain=drain,
+        gate=gate,
+        source=source,
+        body=body,
+        is_pmos=is_pmos,
     )
 
 
 def _inverter() -> Inverter:
-    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPWR"])
-    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["Y", "A", "VGND", "VGND"], index=1)
+    p_prim = _primitive(
+        name="MP", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPWR"]
+    )
+    n_prim = _primitive(
+        name="MN", symbol=_symbol(), nodes=["Y", "A", "VGND", "VGND"], index=1
+    )
     return Inverter(
         pmos=_transistor(p_prim, is_pmos=True),
         nmos=_transistor(n_prim, is_pmos=False),
@@ -114,7 +133,9 @@ def test_orientation_compose():
         for child in all_orientations:
             composed = parent.compose(child)
             for x, y in ((1.0, 0.0), (0.0, 1.0), (3.0, -2.0)):
-                assert composed.transform(x, y) == parent.transform(*child.transform(x, y))
+                assert composed.transform(x, y) == parent.transform(
+                    *child.transform(x, y)
+                )
 
 
 def test_bbox_helpers():
@@ -173,7 +194,9 @@ def test_composite_place_port_moves_children():
         _primitive(name="MP", symbol=_pfet_symbol(), nodes=["out", "in", "vdd", "vdd"])
     )
     nmos = PrimitivePlaceable(
-        _primitive(name="MN", symbol=_symbol(), nodes=["out", "in", "vss", "vss"], index=1)
+        _primitive(
+            name="MN", symbol=_symbol(), nodes=["out", "in", "vss", "vss"], index=1
+        )
     )
     pmos.pose = Pose(Point(0, -50))
     nmos.pose = Pose(Point(0, 50))
@@ -255,8 +278,12 @@ def test_from_inverter_stacks_pmos_above_nmos():
 
 
 def test_from_transmission_gate_ports():
-    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPWR"])
-    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["A", "EN", "B", "VGND"], index=1)
+    p_prim = _primitive(
+        name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPWR"]
+    )
+    n_prim = _primitive(
+        name="MN", symbol=_symbol(), nodes=["A", "EN", "B", "VGND"], index=1
+    )
     tg = TransmissionGate(
         pmos=_transistor(p_prim, is_pmos=True),
         nmos=_transistor(n_prim, is_pmos=False),
@@ -272,8 +299,12 @@ def test_from_transmission_gate_ports():
 
 def test_from_transmission_gate_layout():
     # NMOS listed with A/B on source/drain reversed relative to the PMOS.
-    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"])
-    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["B", "EN", "A", "VNB"], index=1)
+    p_prim = _primitive(
+        name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"]
+    )
+    n_prim = _primitive(
+        name="MN", symbol=_symbol(), nodes=["B", "EN", "A", "VNB"], index=1
+    )
     tg = TransmissionGate(
         pmos=_transistor(p_prim, is_pmos=True),
         nmos=_transistor(n_prim, is_pmos=False),
@@ -302,9 +333,14 @@ def test_from_transmission_gate_layout():
 def test_from_series_chain_stacks_output_above_ground():
     # Listed ground-end first, the order the finder emits. Placement flips it.
     n_gnd = _primitive(name="N1", symbol=_symbol(), nodes=["mid", "B", "VGND", "VNB"])
-    n_out = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=1)
+    n_out = _primitive(
+        name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=1
+    )
     chain = SeriesChain(
-        transistors=(_transistor(n_gnd, is_pmos=False), _transistor(n_out, is_pmos=False)),
+        transistors=(
+            _transistor(n_gnd, is_pmos=False),
+            _transistor(n_out, is_pmos=False),
+        ),
         is_pmos=False,
     )
     placeable = from_super_node(chain)
@@ -329,7 +365,10 @@ def test_from_series_chain_puts_power_on_top_of_pmos():
         name="P0", symbol=_pfet_symbol(), nodes=["mid", "A", "VPWR", "VPB"], index=1
     )
     chain = SeriesChain(
-        transistors=(_transistor(p_out, is_pmos=True), _transistor(p_pwr, is_pmos=True)),
+        transistors=(
+            _transistor(p_out, is_pmos=True),
+            _transistor(p_pwr, is_pmos=True),
+        ),
         is_pmos=True,
     )
     placeable = from_super_node(chain)
@@ -344,7 +383,9 @@ def test_from_series_chain_puts_power_on_top_of_pmos():
 
 def test_from_series_chain_of_three_is_monotonic():
     n2 = _primitive(name="N2", symbol=_symbol(), nodes=["m2", "C", "VGND", "VNB"])
-    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1)
+    n1 = _primitive(
+        name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1
+    )
     n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "m1", "VNB"], index=2)
     chain = SeriesChain(
         transistors=tuple(_transistor(n, is_pmos=False) for n in (n2, n1, n0)),
@@ -364,7 +405,9 @@ def test_from_series_chain_of_three_is_monotonic():
 
 def test_from_series_chain_ties_a_shared_gate():
     n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"])
-    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["mid", "A", "VGND", "VNB"], index=1)
+    n1 = _primitive(
+        name="N1", symbol=_symbol(), nodes=["mid", "A", "VGND", "VNB"], index=1
+    )
     chain = SeriesChain(
         transistors=(_transistor(n0, is_pmos=False), _transistor(n1, is_pmos=False)),
         is_pmos=False,
@@ -376,8 +419,12 @@ def test_from_series_chain_ties_a_shared_gate():
 
 def test_from_series_chain_does_not_wire_a_gate_across_the_middle_device():
     n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "m1", "VNB"])
-    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1)
-    n2 = _primitive(name="N2", symbol=_symbol(), nodes=["m2", "A", "VGND", "VNB"], index=2)
+    n1 = _primitive(
+        name="N1", symbol=_symbol(), nodes=["m1", "B", "m2", "VNB"], index=1
+    )
+    n2 = _primitive(
+        name="N2", symbol=_symbol(), nodes=["m2", "A", "VGND", "VNB"], index=2
+    )
     chain = SeriesChain(
         transistors=tuple(_transistor(n, is_pmos=False) for n in (n0, n1, n2)),
         is_pmos=False,
@@ -390,7 +437,9 @@ def test_from_series_chain_does_not_wire_a_gate_across_the_middle_device():
 
 def test_from_parallel_chain_ties_diffusions_and_splits_gates():
     p0 = _primitive(name="P0", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPB"])
-    p1 = _primitive(name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1)
+    p1 = _primitive(
+        name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1
+    )
     chain = ParallelChain(
         transistors=(_transistor(p0, is_pmos=True), _transistor(p1, is_pmos=True)),
         is_pmos=True,
@@ -419,7 +468,9 @@ def test_from_parallel_chain_ties_diffusions_and_splits_gates():
 
 def test_from_parallel_chain_labels_shared_gates_instead_of_crossing_body():
     n0 = _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "VGND", "VNB"])
-    n1 = _primitive(name="N1", symbol=_symbol(), nodes=["VGND", "A", "Y", "VNB"], index=1)
+    n1 = _primitive(
+        name="N1", symbol=_symbol(), nodes=["VGND", "A", "Y", "VNB"], index=1
+    )
     chain = ParallelChain(
         transistors=(_transistor(n0, is_pmos=False), _transistor(n1, is_pmos=False)),
         is_pmos=False,
@@ -435,7 +486,9 @@ def test_from_parallel_chain_labels_shared_gates_instead_of_crossing_body():
 
 def test_from_parallel_chain_of_three_labels_each_tie_once():
     devices = [
-        _primitive(name=name, symbol=_symbol(), nodes=["Y", "A", "VGND", "VNB"], index=index)
+        _primitive(
+            name=name, symbol=_symbol(), nodes=["Y", "A", "VGND", "VNB"], index=index
+        )
         for index, name in enumerate(("N0", "N1", "N2"))
     ]
     chain = ParallelChain(
@@ -453,7 +506,9 @@ def test_from_parallel_chain_of_three_labels_each_tie_once():
 def test_place_in_row_uses_bbox_width():
     wide = _symbol(bbox=BBox(-40.0, -10.0, 40.0, 10.0))
     narrow = _symbol(stem="r", device_type="res", bbox=BBox(-10.0, -5.0, 10.0, 5.0))
-    a = PrimitivePlaceable(_primitive(name="M1", symbol=wide, nodes=["d", "g", "s", "b"]))
+    a = PrimitivePlaceable(
+        _primitive(name="M1", symbol=wide, nodes=["d", "g", "s", "b"])
+    )
     b = PrimitivePlaceable(
         _primitive(name="R1", symbol=narrow, nodes=["d", "g", "s", "b"], index=1)
     )
@@ -468,9 +523,15 @@ def test_place_in_row_uses_bbox_width():
 def _nand2() -> CmosGate:
     devices = [
         _primitive(name="P0", symbol=_pfet_symbol(), nodes=["Y", "A", "VPWR", "VPB"]),
-        _primitive(name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1),
-        _primitive(name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=2),
-        _primitive(name="N1", symbol=_symbol(), nodes=["mid", "B", "VGND", "VNB"], index=3),
+        _primitive(
+            name="P1", symbol=_pfet_symbol(), nodes=["VPWR", "B", "Y", "VPB"], index=1
+        ),
+        _primitive(
+            name="N0", symbol=_symbol(), nodes=["Y", "A", "mid", "VNB"], index=2
+        ),
+        _primitive(
+            name="N1", symbol=_symbol(), nodes=["mid", "B", "VGND", "VNB"], index=3
+        ),
     ]
     nodes, _ = find_super_nodes(devices)
     (gate,) = nodes
@@ -511,8 +572,12 @@ def test_render_drops_a_wire_that_would_short_two_nets():
 
 
 def test_transmission_gate_swap_sides_mirrors_the_terminals():
-    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"])
-    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["A", "EN", "B", "VNB"], index=1)
+    p_prim = _primitive(
+        name="MP", symbol=_pfet_symbol(), nodes=["A", "ENB", "B", "VPB"]
+    )
+    n_prim = _primitive(
+        name="MN", symbol=_symbol(), nodes=["A", "EN", "B", "VNB"], index=1
+    )
     placeable = from_transmission_gate(
         TransmissionGate(
             pmos=_transistor(p_prim, is_pmos=True),

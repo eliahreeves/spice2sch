@@ -16,9 +16,7 @@ _BOX_RE = re.compile(
     r"^B \d+ (?P<x1>[-\d.]+) (?P<y1>[-\d.]+) (?P<x2>[-\d.]+) (?P<y2>[-\d.]+)"
 )
 _POLY_RE = re.compile(r"^P \d+ (?P<n>\d+) (?P<coords>[^{]+)")
-_ARC_RE = re.compile(
-    r"^A \d+ (?P<cx>[-\d.]+) (?P<cy>[-\d.]+) (?P<r>[-\d.]+)"
-)
+_ARC_RE = re.compile(r"^A \d+ (?P<cx>[-\d.]+) (?P<cy>[-\d.]+) (?P<r>[-\d.]+)")
 _ATTR_RE = re.compile(r"(\w+)=([^\s}]+)")
 _TYPE_RE = re.compile(r"\btype=(\S+)")
 _TEMPLATE_MODEL_RE = re.compile(r"\bmodel=(\S+)")

@@ -52,10 +52,13 @@ def _shuffled_chain(length: int) -> list[Placeable]:
     return chain
 
 
-def _overlaps(a: Placeable, b: Placeable) -> bool:
-    x, y = a.extent, b.extent
+def _overlaps_bbox(a: Placeable, b: Placeable) -> bool:
+    x, y = a.bbox, b.bbox
     return (
-        x.min_x < y.max_x and y.min_x < x.max_x and x.min_y < y.max_y and y.min_y < x.max_y
+        x.min_x < y.max_x
+        and y.min_x < x.max_x
+        and x.min_y < y.max_y
+        and y.min_y < x.max_y
     )
 
 
@@ -63,15 +66,15 @@ def _input_net(placeable: Placeable) -> str:
     return placeable.children["pmos"].nets["G"]  # type: ignore[attr-defined]
 
 
-def test_place_keeps_extents_apart_and_on_grid():
+def test_place_keeps_bodies_apart_and_on_grid():
     placeables = _shuffled_chain(6)
     place(placeables, Point(100, 0), 40, inputs=["n0"], outputs=["n6"])
     for a, b in itertools.combinations(placeables, 2):
-        assert not _overlaps(a, b)
+        assert not _overlaps_bbox(a, b)
     for placeable in placeables:
         assert placeable.pose.origin.x % GRID == 0
         assert placeable.pose.origin.y % GRID == 0
-        assert placeable.extent.min_x >= 100 - GRID
+        assert placeable.bbox.min_x >= 100 - GRID
         assert placeable.extent.min_y >= 0 - GRID
 
 
@@ -105,7 +108,9 @@ def test_place_is_deterministic():
 
 def test_place_single_and_empty():
     assert place([], Point(0, 0), 40) == []
-    lone = PrimitivePlaceable(_primitive(name="M1", symbol=_symbol(), nodes=["d", "g", "s", "b"]))
+    lone = PrimitivePlaceable(
+        _primitive(name="M1", symbol=_symbol(), nodes=["d", "g", "s", "b"])
+    )
     place([lone], Point(100, 0), 40)
     assert lone.extent.min_x >= 100 - GRID
 
@@ -121,8 +126,12 @@ def test_place_never_reorients():
 
 
 def test_place_mirrors_a_transmission_gate_to_face_its_input():
-    p_prim = _primitive(name="MP", symbol=_pfet_symbol(), nodes=["OUT", "ENB", "MID", "VPB"])
-    n_prim = _primitive(name="MN", symbol=_symbol(), nodes=["OUT", "EN", "MID", "VNB"], index=1)
+    p_prim = _primitive(
+        name="MP", symbol=_pfet_symbol(), nodes=["OUT", "ENB", "MID", "VPB"]
+    )
+    n_prim = _primitive(
+        name="MN", symbol=_symbol(), nodes=["OUT", "EN", "MID", "VNB"], index=1
+    )
     tg = from_transmission_gate(
         TransmissionGate(
             pmos=_transistor(p_prim, is_pmos=True),
