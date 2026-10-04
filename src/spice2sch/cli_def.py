@@ -14,7 +14,10 @@ def get_version():
 
 def create_parser() -> ArgumentParser:
     parser = ArgumentParser(
-        description="Convert SkyWater SKY130 spice files into xschem .sch files."
+        description=(
+            "Convert SkyWater SKY130 spice and GF180MCU CDL files into "
+            "xschem .sch files."
+        )
     )
     parser.add_argument(
         "-v",

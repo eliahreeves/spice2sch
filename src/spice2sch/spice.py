@@ -1,4 +1,5 @@
-from typing import List, Tuple
+import re
+from typing import List, Set, Tuple
 
 # Supply nets, drawn at the top of a CMOS stack. Shared with I/O
 # classification below and with chain placement in `placeable.py`.
@@ -10,6 +11,7 @@ POWER_NETS = {
     "LOWLVPWR",
     "KAPWR",
     "VPB",
+    "VNW",
 }
 
 # Ground nets, drawn at the bottom of a CMOS stack.
@@ -18,11 +20,46 @@ GROUND_NETS = {
     "GND",
     "VGND",
     "VNB",
+    "VPW",
 }
 
 # Rails are never internal series junctions, even when some local subset of
 # a design happens to touch one with exactly two diffusion terminals.
 POWER_GROUND_NETS = POWER_NETS | GROUND_NETS
+
+# Primitive (non-X) device lines have a fixed terminal count before the
+# model name, as written by CDL netlists such as gf180mcu's.
+_PRIMITIVE_NODE_COUNTS = {"M": 4, "D": 2}
+
+# Names for unlabeled values after the model, in SPICE positional order.
+_POSITIONAL_PARAMS = {"D": ("area", "pj")}
+
+_SI_SCALE = {
+    "t": 1e12,
+    "g": 1e9,
+    "meg": 1e6,
+    "k": 1e3,
+    "m": 1e-3,
+    "u": 1e-6,
+    "n": 1e-9,
+    "p": 1e-12,
+    "f": 1e-15,
+    "a": 1e-18,
+}
+_NUMBER_RE = re.compile(
+    r"^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)(meg|[tgkmunpfa])?[a-z]*$",
+    re.IGNORECASE,
+)
+
+
+def parse_number(text: str) -> float:
+    """Parse a SPICE number with an optional scale suffix, e.g. ``0.2052p``."""
+    match = _NUMBER_RE.match(text.strip())
+    if not match:
+        raise ValueError(f"Not a SPICE number: {text!r}")
+    value = float(match.group(1))
+    suffix = (match.group(2) or "").lower()
+    return value * _SI_SCALE.get(suffix, 1.0)
 
 
 class SubcktCall:
@@ -32,25 +69,38 @@ class SubcktCall:
     params: List[Tuple[str, str]]
 
     def __init__(self, call_str: str):
-        tokens = call_str.split()
+        # CDL may separate an X call's nodes from its subckt name with "/".
+        tokens = [token for token in call_str.split() if token != "/"]
         if not tokens:
             raise ValueError("Input string is empty")
 
         self.name = tokens[0]
-        if not self.name.startswith("x") and not self.name.startswith("X"):
-            raise ValueError("Subckt call must begin with X")
+        prefix = self.name[0].upper()
 
-        param_index = len(tokens) - 1
+        if prefix == "X":
+            ref_index = len(tokens) - 1
+            while "=" in tokens[ref_index]:
+                ref_index -= 1
+        elif prefix in _PRIMITIVE_NODE_COUNTS:
+            ref_index = 1 + _PRIMITIVE_NODE_COUNTS[prefix]
+            if ref_index >= len(tokens):
+                raise ValueError(f"{self.name}: missing model name")
+        else:
+            raise ValueError(f"Unsupported device line: {self.name}")
 
-        while "=" in tokens[param_index]:
-            param_index -= 1
+        self.nodes = tokens[1:ref_index]
+        self.subckt_ref = tokens[ref_index]
 
-        self.nodes = tokens[1:param_index]
-        self.subckt_ref = tokens[param_index]
-        params: List[Tuple[str, str]] = []
-        for token in tokens[param_index + 1 :]:
+        positional = [token for token in tokens[ref_index + 1 :] if "=" not in token]
+        params: List[Tuple[str, str]] = list(
+            zip(_POSITIONAL_PARAMS.get(prefix, ()), positional)
+        )
+        for token in tokens[ref_index + 1 :]:
+            if "=" not in token:
+                continue
             name, value = token.split("=", 1)
-            params.append((name, value))
+            # CDL marks netlister-only params with "$" (e.g. "$m=1").
+            params.append((name.lstrip("$"), value))
         self.params = params
 
 
@@ -63,17 +113,41 @@ class Spice:
         self.__append_plus()
         self.__reduce_to_subckt_definition()
 
-    def extract_subckt_calls(self) -> List[SubcktCall]:
-        return [SubcktCall(subckt_call) for subckt_call in self.content[1:-1]]
+    @property
+    def name(self) -> str:
+        tokens = self.content[0].split()
+        if len(tokens) < 2:
+            raise ValueError("Invalid format")
+        return tokens[1]
 
-    def extract_io(self) -> Tuple[List[str], List[str]]:
-        subckt_line = self.content[0]
-
-        tokens = subckt_line.split()
+    @property
+    def ports(self) -> List[str]:
+        tokens = self.content[0].split()
         if len(tokens) < 3:
             raise ValueError("Invalid format")
+        return tokens[2:]
 
-        ports = tokens[2:]
+    def extract_subckt_calls(self) -> List[SubcktCall]:
+        return [
+            SubcktCall(subckt_call)
+            for subckt_call in self.content[1:-1]
+            if subckt_call.strip()
+        ]
+
+    def extract_io(self) -> Tuple[List[str], List[str]]:
+        ports = self.ports
+
+        first_rail = next(
+            (i for i, port in enumerate(ports) if port in POWER_GROUND_NETS), None
+        )
+        has_signal_after_rail = first_rail is not None and any(
+            port not in POWER_GROUND_NETS for port in ports[first_rail:]
+        )
+        # sky130 lists inputs, rails, then outputs. Netlists that put every
+        # rail last (gf180mcu CDL) carry no order hint, so infer outputs from
+        # connectivity instead.
+        if not has_signal_after_rail:
+            return self.__extract_io_by_connectivity(ports)
 
         inputs: List[str] = []
         outputs: List[str] = []
@@ -88,6 +162,31 @@ class Spice:
                 inputs.append(port)
             else:
                 outputs.append(port)
+        return (inputs, outputs)
+
+    def __extract_io_by_connectivity(
+        self, ports: List[str]
+    ) -> Tuple[List[str], List[str]]:
+        """A signal port is an output when it touches a FET's drain/source
+        but never a gate; everything else (including rails) is an input."""
+        diffusion: Set[str] = set()
+        gates: Set[str] = set()
+        for call in self.extract_subckt_calls():
+            if call.name[0].upper() != "M":
+                continue
+            drain, gate, source = call.nodes[:3]
+            diffusion.update((drain, source))
+            gates.add(gate)
+
+        inputs: List[str] = []
+        outputs: List[str] = []
+        for port in ports:
+            is_output = (
+                port not in POWER_GROUND_NETS
+                and port in diffusion
+                and port not in gates
+            )
+            (outputs if is_output else inputs).append(port)
         return (inputs, outputs)
 
     def __reduce_to_subckt_definition(self):

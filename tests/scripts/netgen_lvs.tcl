@@ -3,7 +3,10 @@ if {[catch {set PDK_ROOT $env(PDK_ROOT)}]} {
     puts "Please set PDK_ROOT"
     exit 1
 }
-set setup_file "${PDK_ROOT}/sky130A/libs.tech/netgen/setup.tcl"
+if {[catch {set PDK $env(PDK)}]} {
+    set PDK sky130A
+}
+set setup_file "${PDK_ROOT}/${PDK}/libs.tech/netgen/setup.tcl"
 if {![file exists $setup_file]} {
     puts stderr "ERROR: Setup file \"$setup_file\" does not exist. Ensure PDK_ROOT was set correctly."
     exit 1
@@ -37,8 +40,9 @@ proc get_subckt_line {file} {
     # Replace newline+ with a space to join continuation lines.
     regsub -all {\n\+} $content {} content
 
-    if {[regexp -line {^\.subckt.*} $content match]} {
-        return $match
+    # CDL writes ".SUBCKT"; xschem always writes ".subckt".
+    if {[regexp -nocase -line {^\.subckt.*} $content match]} {
+        return [string tolower [string range $match 0 6]][string range $match 7 end]
     } else {
         puts stderr "ERROR: .subckt not found"
         exit 1

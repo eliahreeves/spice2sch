@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from spice2sch.models import Point, Primitive
 import spice2sch.constants as constants
@@ -15,27 +15,35 @@ from spice2sch.supernode_place import build_placeables
 from spice2sch.placement import place
 
 
-def create_io_block(pins: Tuple[List[str], List[str]], origin: Point) -> str:
-    output = ""
-    for index, input_pin in enumerate(pins[0]):
-        label = next_label_name()
-        output += (
-            f"C {{ipin.sym}} {origin.x} {origin.y + index * 20} 0 0 "
-            f"{{name={label} lab={input_pin}}}\n"
-        )
+def create_io_block(
+    pins: Tuple[List[str], List[str]], origin: Point, order: Sequence[str] = ()
+) -> str:
+    """Emit ipin/opin symbols. xschem netlists ports in pin-instance order,
+    so pins are written in `order` (the netlist's .subckt port order) when
+    given, which matters when outputs precede the rails (gf180mcu)."""
+    inputs, outputs = pins
+    rank = {port: index for index, port in enumerate(order)}
+    tagged = [(pin, False, i) for i, pin in enumerate(inputs)] + [
+        (pin, True, i) for i, pin in enumerate(outputs)
+    ]
+    tagged.sort(key=lambda item: rank.get(item[0], len(rank)))
 
-    for index, output_pin in enumerate(pins[1]):
+    output = ""
+    for pin, is_output, index in tagged:
         label = next_label_name()
+        symbol, x = ("opin.sym", origin.x + 20) if is_output else ("ipin.sym", origin.x)
         output += (
-            f"C {{opin.sym}} {origin.x + 20} {origin.y + index * 20} 0 0 "
-            f"{{name={label} lab={output_pin}}}\n"
+            f"C {{{symbol}}} {x} {origin.y + index * 20} 0 0 "
+            f"{{name={label} lab={pin}}}\n"
         )
 
     return output
 
 
 def create_primitive_objects(
-    calls: List[SubcktCall], symbol_index: Optional[SymbolIndex]
+    calls: List[SubcktCall],
+    symbol_index: Optional[SymbolIndex],
+    cell_name: Optional[str] = None,
 ) -> List[Primitive]:
     primitives: List[Primitive] = []
     if not calls:
@@ -49,7 +57,7 @@ def create_primitive_objects(
         )
 
     for index, call in enumerate(calls):
-        symbol = symbol_index.resolve(call.subckt_ref)
+        symbol = symbol_index.resolve(call.subckt_ref, near=cell_name)
         if symbol is None:
             print(
                 f"Warning: no PDK symbol for {call.subckt_ref}; skipping",
@@ -78,7 +86,9 @@ def main() -> None:
         sch_output = constants.file_header
 
         io_pins = spice_file.extract_io()
-        sch_output += create_io_block(io_pins, constants.io_origin)
+        sch_output += create_io_block(
+            io_pins, constants.io_origin, order=spice_file.ports
+        )
 
         calls = spice_file.extract_subckt_calls()
 
@@ -89,7 +99,7 @@ def main() -> None:
             except FileNotFoundError as exc:
                 parser.error(str(exc))
 
-        primitives = create_primitive_objects(calls, symbol_index)
+        primitives = create_primitive_objects(calls, symbol_index, spice_file.name)
         external_nets = set(io_pins[0]) | set(io_pins[1])
         super_nodes, leftovers = find_super_nodes(primitives, external_nets)
         placeables = build_placeables(super_nodes, leftovers)

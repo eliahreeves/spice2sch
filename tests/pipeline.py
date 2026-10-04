@@ -33,7 +33,9 @@ def generate_schematic(
         raise PipelineError(f"spice2sch failed:\n{result.stdout}\n{result.stderr}")
 
 
-def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
+def netlist_schematic(
+    workdir: Path, cell_name: str, pdk_root: Path, pdk: str = "sky130A"
+) -> Path:
     log_path = workdir / "logs" / f"{cell_name}.spice.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -48,7 +50,7 @@ def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
         ],
         cwd=workdir,
         env={
-            **_passthrough_env(pdk_root),
+            **_passthrough_env(pdk_root, pdk),
             "SCHEMATIC": cell_name,
             "PWD": str(workdir),
         },
@@ -65,7 +67,9 @@ def netlist_schematic(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
     return netlist_path
 
 
-def generate_svg(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
+def generate_svg(
+    workdir: Path, cell_name: str, pdk_root: Path, pdk: str = "sky130A"
+) -> Path:
     """Export an SVG for a schematic via xschem, matching sky130_schematics."""
     log_path = workdir / "logs" / f"{cell_name}.svg.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -83,7 +87,7 @@ def generate_svg(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
         ],
         cwd=workdir,
         env={
-            **_passthrough_env(pdk_root),
+            **_passthrough_env(pdk_root, pdk),
             "SCHEMATIC": cell_name,
             "PWD": str(workdir),
         },
@@ -99,6 +103,27 @@ def generate_svg(workdir: Path, cell_name: str, pdk_root: Path) -> Path:
     return svg_path
 
 
+def cdl_to_spice(text: str) -> str:
+    """Rewrite CDL-only syntax that netgen's SPICE reader misreads.
+
+    Netgen drops a diode's positional area/perimeter and keeps "$m" as a
+    literal property name, so the reference would carry no comparable
+    properties. Deliberately independent of spice2sch's own parser.
+    """
+    lines = []
+    for line in text.splitlines():
+        tokens = line.split()
+        if tokens and tokens[0][0] in "Dd" and len(tokens) > 4:
+            named = [t for t in tokens[4:] if "=" in t]
+            positional = [t for t in tokens[4:] if "=" not in t]
+            tokens = tokens[:4] + [
+                f"{name}={value}" for name, value in zip(("area", "pj"), positional)
+            ] + named
+        line = " ".join(re.sub(r"^\$(\w+=)", r"\1", t) for t in tokens) or line
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
 @dataclass
 class LvsResult:
     passed: bool
@@ -112,15 +137,21 @@ def run_lvs(
     cell_name: str,
     report_path: Path,
     pdk_root: Path,
+    pdk: str = "sky130A",
 ) -> LvsResult:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.unlink(missing_ok=True)
 
+    netgen_reference = reference_spice
+    if reference_spice.suffix.lower() == ".cdl":
+        netgen_reference = report_path.parent / f"{cell_name}.reference.spice"
+        netgen_reference.write_text(cdl_to_spice(reference_spice.read_text()))
+
     result = subprocess.run(
         ["netgen", "-batch", "source", str(SCRIPTS_DIR / "netgen_lvs.tcl")],
         env={
-            **_passthrough_env(pdk_root),
-            "REFERENCE_SPICE_FILE": str(reference_spice),
+            **_passthrough_env(pdk_root, pdk),
+            "REFERENCE_SPICE_FILE": str(netgen_reference),
             "REFERENCE_CELL_NAME": cell_name,
             "XSCHEM_SPICE_FILE": str(generated_netlist),
             "XSCHEM_CELL_NAME": cell_name,
@@ -182,7 +213,7 @@ def prepare_workdir(tmp_path: Path, repo_root: Path) -> None:
     shutil.copy(repo_root / "xschemrc", tmp_path / "xschemrc")
 
 
-def _passthrough_env(pdk_root: Path) -> dict[str, str]:
+def _passthrough_env(pdk_root: Path, pdk: str) -> dict[str, str]:
     import os
 
-    return {**os.environ, "PDK_ROOT": str(pdk_root)}
+    return {**os.environ, "PDK_ROOT": str(pdk_root), "PDK": pdk}

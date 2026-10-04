@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import ReferenceCell
 from .pipeline import (
     generate_schematic,
     generate_svg,
@@ -19,7 +20,9 @@ KNOWN_FAILURES = {
 }
 
 
-def test_lvs_round_trip(reference_spice: Path, tmp_path: Path, pdk_root: Path):
+def test_lvs_round_trip(reference_cell: ReferenceCell, tmp_path: Path, pdk_root: Path):
+    reference_spice = reference_cell.path
+    pdk = reference_cell.pdk
     cell_name = reference_spice.stem
 
     if cell_name in KNOWN_FAILURES:
@@ -31,16 +34,16 @@ def test_lvs_round_trip(reference_spice: Path, tmp_path: Path, pdk_root: Path):
     sch_path.parent.mkdir(parents=True)
     generate_schematic(reference_spice, sch_path, pdk_root)
 
-    svg_path = generate_svg(tmp_path, cell_name, pdk_root)
+    svg_path = generate_svg(tmp_path, cell_name, pdk_root, pdk)
     SVG_DIR.mkdir(parents=True, exist_ok=True)
     persisted = SVG_DIR / f"{cell_name}.svg"
     persisted.write_bytes(svg_path.read_bytes())
 
-    generated_netlist = netlist_schematic(tmp_path, cell_name, pdk_root)
+    generated_netlist = netlist_schematic(tmp_path, cell_name, pdk_root, pdk)
 
     report_path = tmp_path / "lvs" / f"{cell_name}.report"
     result = run_lvs(
-        reference_spice, generated_netlist, cell_name, report_path, pdk_root
+        reference_spice, generated_netlist, cell_name, report_path, pdk_root, pdk
     )
 
     assert result.passed, (

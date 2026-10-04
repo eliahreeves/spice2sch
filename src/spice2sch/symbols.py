@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -222,7 +223,7 @@ class SymbolIndex:
 
     Works with any PDK laid out the open_pdks way, i.e. one or more
     ``<variant>/libs.tech/xschem/<library>/*.sym`` directories, and SPICE
-    subckt refs of the form ``<library>__<model>``.
+    subckt refs of the form ``<library>__<model>`` or bare CDL model names.
     """
 
     def __init__(self, pdk_root: Path):
@@ -255,10 +256,18 @@ class SymbolIndex:
                     if existing is None or _prefer_new(existing, symbol, model):
                         self._by_key[key] = symbol
 
-    def resolve(self, subckt_ref: str) -> SymbolDef | None:
+    def resolve(self, subckt_ref: str, near: str | None = None) -> SymbolDef | None:
+        """Find the symbol for `subckt_ref`.
+
+        CDL netlists (e.g. gf180mcu) name devices by bare model
+        ("nfet_05v0") with no ``<library>__`` prefix. Those are looked up in
+        every library; when several match, the one sharing the longest name
+        prefix with `near` (typically the cell being converted, e.g.
+        "gf180mcu_fd_sc_mcu7t5v0__inv_1" -> "gf180mcu_fd_pr") wins.
+        """
         library, sep, model = subckt_ref.partition("__")
         if not sep:
-            return None
+            return self._resolve_bare(subckt_ref, near or "")
         symbol = self._by_key.get((library, model))
         if symbol is not None:
             return symbol
@@ -274,3 +283,17 @@ class SymbolIndex:
             return self._by_key.get((library, model[len("special_") :]))
 
         return None
+
+    def _resolve_bare(self, model: str, near: str) -> SymbolDef | None:
+        candidates = [
+            symbol for (_, key_model), symbol in self._by_key.items() if key_model == model
+        ]
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda symbol: (
+                -len(os.path.commonprefix([symbol.library, near])),
+                symbol.library,
+            ),
+        )
